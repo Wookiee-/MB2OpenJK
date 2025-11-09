@@ -97,22 +97,48 @@ static qboolean isDuelOpponent(sharedEntity_t *A, sharedEntity_t *B) { //wtf voi
 	return qfalse;
 }
 
-int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) { //figure something out for smooth collision?
+int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
 
+	// The original cvar check remains the entry point.
 	if (!sv_snapShotDuelCull->integer)
 		return 0;
 
-	if (isActor(ent) && isActor(touch)) {
-		if (!isDueling(ent) && !isDueling(touch)) { //2 players in ffa
-			return 0; //don't cull
+	auto culledTouch = flatten(touch);
+
+	if (!isActor(ent)) {
+		return 0;
+	}
+
+	// --- 2. Refining Actor Culling Logic / Duelist Culling ---
+	if (isDueling(ent)) {
+
+		if (isDuelOpponent(ent, culledTouch)) {
+			return 0; // Don't cull.
 		}
-		else if (!isDueling(ent) && isDueling(touch)) { //they're dueling and we're not
-			return 2; //don't cull and don't clip
+
+		if (isActor(culledTouch)) {
+			return 1; // Cull other actors and their direct events.
 		}
-		else if (isDuelOpponent(ent, touch)) { //we're in a duel and this is our opponent
-			return 0; //don't cull
+
+		if (touch->r.ownerNum != ENTITYNUM_NONE) {
+			sharedEntity_t *owner = SV_GentityNum(touch->r.ownerNum);
+
+			if (isActor(owner) && !isDuelOpponent(ent, owner)) {
+				return 1;
+			}
 		}
-		return 1; //cull everything else
+
+
+		return 0;
+	}
+
+
+	if (isActor(culledTouch)) {
+		if (isDueling(culledTouch)) {
+			return 2; // Don't cull and don't clip (spectating).
+		}
+
+		return 0; // Don't cull.
 	}
 
 	return 0;
