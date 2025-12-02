@@ -700,7 +700,16 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 		}
 	}
 
-	rateMsec = ( messageSize + HEADER_RATE_BYTES ) * 1000 / ((int) (rate * com_timescale->value));
+//	rateMsec = ( messageSize + HEADER_RATE_BYTES ) * 1000 / ((int) (rate * com_timescale->value));
+
+// Reduced overhead calculation for MB2 smoothness at 50k rate
+    int effectiveSize = messageSize;
+    // Don't penalize large packets heavily
+    if (effectiveSize > 1000) effectiveSize = 1000;
+
+    // Use a smaller header constant (originally 48) to be more generous
+    rateMsec = ( effectiveSize + 24 ) * 1000 / ((int) (rate * com_timescale->value));
+
 
 	return rateMsec;
 }
