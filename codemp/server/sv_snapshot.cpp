@@ -770,14 +770,12 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	// normal rate / snapshotMsec calculation
 	rateMsec = SV_RateMsec( client, msg->cursize );
 
-	if ( rateMsec < client->snapshotMsec ) {
-		// never send more packets than this, no matter what the rate is at
-		rateMsec = client->snapshotMsec;
-		client->rateDelayed = qfalse;
-	} else {
-		client->rateDelayed = qtrue;
-	}
+	// Force the rateDelayed flag to ALWAYS be false for better client-side prediction
+	client->rateDelayed = qfalse; 
 
+	if ( rateMsec < client->snapshotMsec ) {
+	    rateMsec = client->snapshotMsec;
+	}
 	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
 
 	// don't pile up empty snapshots while connecting
