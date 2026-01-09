@@ -700,6 +700,10 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 		}
 	}
 
+	if ( messageSize < 200 ) {
+    return 0; // Walking/Movement packets should have 0 delay penalty
+	}
+
 	int effectiveSize = messageSize;
 	if (effectiveSize > 1000) effectiveSize = 1000; 
 
@@ -776,7 +780,7 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	if ( rateMsec < client->snapshotMsec ) {
 	    rateMsec = client->snapshotMsec;
 	}
-	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
+	client->nextSnapshotTime = svs.time + (int)rateMsec;
 
 	// don't pile up empty snapshots while connecting
 	if ( client->state != CS_ACTIVE ) {

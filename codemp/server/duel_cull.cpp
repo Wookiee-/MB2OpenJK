@@ -75,6 +75,10 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
 	if (!sv_snapShotDuelCull->integer)
 		return 0;
 
+	if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
+        return 0; 
+    }
+
 	auto culledTouch = flatten(touch);
 
 	if (!isActor(ent)) {
