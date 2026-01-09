@@ -675,46 +675,41 @@ to take to clear, based on the current rate
 */
 #define	HEADER_RATE_BYTES	48		// include our header, IP header, and some overhead
 static int SV_RateMsec( client_t *client, int messageSize ) {
-	int		rate;
-	int		rateMsec;
+    int     rate;
+    int     rateMsec;
 
-	// individual messages will never be larger than fragment size
-	if ( messageSize > 1500 ) {
-		messageSize = 1500;
-	}
-	rate = client->rate;
-	if ( sv_maxRate->integer ) {
-		if ( sv_maxRate->integer < 1000 ) {
-			Cvar_Set( "sv_MaxRate", "1000" );
-		}
-		if ( sv_maxRate->integer < rate ) {
-			rate = sv_maxRate->integer;
-		}
-	}
-	if ( sv_minRate->integer ) {
-		if ( sv_minRate->integer < 1000 ) {
-			Cvar_Set( "sv_minRate", "1000" );
-		}
-		if ( sv_minRate->integer > rate ) {
-			rate = sv_minRate->integer;
-		}
-	}
+    if ( messageSize > 1500 ) {
+        messageSize = 1500;
+    }
 
-	if ( messageSize < 200 ) {
-    return 0; // Walking/Movement packets should have 0 delay penalty
-	}
+    rate = client->rate;
+    if ( sv_maxRate->integer ) {
+        if ( sv_maxRate->integer < 1000 ) Cvar_Set( "sv_MaxRate", "1000" );
+        if ( sv_maxRate->integer < rate ) rate = sv_maxRate->integer;
+    }
+    if ( sv_minRate->integer ) {
+        if ( sv_minRate->integer < 1000 ) Cvar_Set( "sv_minRate", "1000" );
+        if ( sv_minRate->integer > rate ) rate = sv_minRate->integer;
+    }
 
-	int effectiveSize = messageSize;
-	if (effectiveSize > 1000) effectiveSize = 1000; 
+    if ( messageSize < 200 ) {
+        return 0; 
+    }
 
-	// Use a smaller header constant (24 instead of 48) to be more generous
-	rateMsec = ( effectiveSize + 24 ) * 1000 / ((int) (rate * com_timescale->value));
+    int effectiveSize = messageSize;
+    if (effectiveSize > 1000) effectiveSize = 1000; 
 
-	if ( rateMsec >= client->snapshotMsec ) {
-		rateMsec = client->snapshotMsec - 1;
-	}
+    rateMsec = ( effectiveSize + 24 ) * 1000 / ((int) (rate * com_timescale->value));
 
-	return rateMsec;
+    if (client->ping > 100) {
+        rateMsec += 1; 
+    }
+
+    if ( rateMsec >= client->snapshotMsec ) {
+        rateMsec = client->snapshotMsec - 1;
+    }
+
+    return rateMsec;
 }
 
 extern void SV_WriteDemoMessage ( client_t *cl, msg_t *msg, int headerBytes );
@@ -773,14 +768,18 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 
 	// normal rate / snapshotMsec calculation
 	rateMsec = SV_RateMsec( client, msg->cursize );
+    int frameTime = (int)(1000.0 / sv_fps->integer); 
 
-	// Force the rateDelayed flag to ALWAYS be false for better client-side prediction
-	client->rateDelayed = qfalse; 
+    client->rateDelayed = qfalse; 
 
-	if ( rateMsec < client->snapshotMsec ) {
-	    rateMsec = client->snapshotMsec;
-	}
-	client->nextSnapshotTime = svs.time + (int)rateMsec;
+    // We use the larger of the two: the bandwidth limit OR the snapshot frequency.
+    if ( rateMsec < client->snapshotMsec ) {
+        rateMsec = client->snapshotMsec;
+    }
+
+    rateMsec = ((rateMsec + frameTime - 1) / frameTime) * frameTime;
+
+    client->nextSnapshotTime = svs.time + rateMsec;;
 
 	// don't pile up empty snapshots while connecting
 	if ( client->state != CS_ACTIVE ) {
