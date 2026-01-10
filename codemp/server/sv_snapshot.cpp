@@ -678,6 +678,12 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
     int     rate;
     int     rateMsec;
 
+    // [OPTIMIZATION]: Whitelist small movement packets
+    // This removes the "heavy" feeling when walking
+    if ( messageSize < 200 ) {
+        return 0; 
+    }
+
     if ( messageSize > 1500 ) {
         messageSize = 1500;
     }
@@ -692,21 +698,13 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
         if ( sv_minRate->integer > rate ) rate = sv_minRate->integer;
     }
 
-    if ( messageSize < 200 ) {
-        return 0; 
-    }
+    // [STABILITY]: Use the original 48-byte header penalty
+    // This provides the stable rhythm the original engine expects
+    rateMsec = ( messageSize + 48 ) * 1000 / ((int) (rate * com_timescale->value));
 
-    int effectiveSize = messageSize;
-    if (effectiveSize > 1000) effectiveSize = 1000; 
-
-    rateMsec = ( effectiveSize + 24 ) * 1000 / ((int) (rate * com_timescale->value));
-
+    // [OPTIMIZATION]: Jitter protection for high-latency players
     if (client->ping > 100) {
         rateMsec += 1; 
-    }
-
-    if ( rateMsec >= client->snapshotMsec ) {
-        rateMsec = client->snapshotMsec - 1;
     }
 
     return rateMsec;
@@ -767,31 +765,33 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	}
 
 	// normal rate / snapshotMsec calculation
-	rateMsec = SV_RateMsec( client, msg->cursize );
-    int frameTime = (int)(1000.0 / sv_fps->integer); 
+	// 1. Calculate the rate-based delay using your SV_RateMsec
+    rateMsec = SV_RateMsec( client, msg->cursize );
 
-    client->rateDelayed = qfalse; 
-
-    // We use the larger of the two: the bandwidth limit OR the snapshot frequency.
+    // 2. Hybrid "No-Choke" and Dynamic Delay Logic
     if ( rateMsec < client->snapshotMsec ) {
+        // Bandwidth is clear: send at the requested snapshot rate
         rateMsec = client->snapshotMsec;
+        client->rateDelayed = qfalse; 
+    } else {
+        // Bandwidth is saturated: delay slightly, but notify the client
+        // Setting this to +1 ensures we don't skip entire snapshots while still 
+        // informing the client engine to interpolate (smoothing movement).
+        rateMsec = client->snapshotMsec + 1;
+        client->rateDelayed = qtrue; 
     }
 
-    rateMsec = ((rateMsec + frameTime - 1) / frameTime) * frameTime;
+    // 3. Restore the Standard Timing Math
+    // Avoid the manual frame-locking math here to prevent microstutter from drift.
+    client->nextSnapshotTime = svs.time + ((int)(rateMsec * com_timescale->value));
 
-    client->nextSnapshotTime = svs.time + rateMsec;;
-
-	// don't pile up empty snapshots while connecting
-	if ( client->state != CS_ACTIVE ) {
-		// a gigantic connection message may have already put the nextSnapshotTime
-		// more than a second away, so don't shorten it
-		// do shorten if client is downloading
-		if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
-			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
-		}
-	}
+    // 4. Original Connection Safety
+    if ( client->state != CS_ACTIVE ) {
+        if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int)(1000.0 * com_timescale->value)) ) {
+            client->nextSnapshotTime = svs.time + ((int)(1000 * com_timescale->value));
+        }
+    }
 }
-
 
 /*
 =======================
