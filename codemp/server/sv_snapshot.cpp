@@ -700,12 +700,7 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 
     // [STABILITY]: Use the original 48-byte header penalty
     // This provides the stable rhythm the original engine expects
-    rateMsec = ( messageSize + 48 ) * 1000 / ((int) (rate * com_timescale->value));
-
-    // [OPTIMIZATION]: Jitter protection for high-latency players
-    if (client->ping > 100) {
-        rateMsec += 1; 
-    }
+    rateMsec = ( messageSize + HEADER_RATE_BYTES ) * 1000 / ((int) (rate * com_timescale->value));
 
     return rateMsec;
 }
