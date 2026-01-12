@@ -684,10 +684,6 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
         return 0; 
     }
 
-    if ( messageSize > 1500 ) {
-        messageSize = 1500;
-    }
-
     rate = client->rate;
     if ( sv_maxRate->integer ) {
         if ( sv_maxRate->integer < 1000 ) Cvar_Set( "sv_MaxRate", "1000" );
