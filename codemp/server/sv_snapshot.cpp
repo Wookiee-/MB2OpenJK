@@ -680,7 +680,7 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 
     // [OPTIMIZATION]: Whitelist small movement packets
     // This removes the "heavy" feeling when walking
-    if ( messageSize < 200 ) {
+    if ( messageSize < 500 ) {
         return 0; 
     }
 
