@@ -678,10 +678,8 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
     int     rate;
     int     rateMsec;
 
-    // [OPTIMIZATION]: Whitelist small movement packets
-    // This removes the "heavy" feeling when walking
-    if ( messageSize < 500 ) {
-        return 0; 
+    if ( messageSize > 1500 ) {
+        messageSize = 1500;
     }
 
     rate = client->rate;
