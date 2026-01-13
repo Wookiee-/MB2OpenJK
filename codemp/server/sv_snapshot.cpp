@@ -768,7 +768,8 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
     }
 
     // Final timing calculation
-    client->nextSnapshotTime = svs.time + (int)(rateMsec * timescale);
+    float timeDelay = (float)rateMsec * timescale;
+    client->nextSnapshotTime = svs.time + (int)timeDelay;
 
     // 5. Connection/Download Safety
     // Prevents snapshots from flooding a client while they are still loading or downloading.
