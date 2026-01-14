@@ -693,9 +693,20 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
         if ( sv_minRate->integer > rate ) rate = sv_minRate->integer;
     }
 
-    // High-Ping Optimization: Cap the size so huge packets don't cause huge lag
+    // --- Dynamic Min-Max Cap ---
+    // Capping at 1300 for the math allows 1500-byte fragments to clear 
+    // the "pipe" faster, preventing the "heavy" feeling for high-ping players.
     int effectiveSize = messageSize;
-    if (effectiveSize > 1000) effectiveSize = 1000; 
+
+    if (effectiveSize < 1000) {
+        // SMALL PACKETS: Use actual size for perfect, snappy prediction.
+        effectiveSize = messageSize;
+    } 
+    else if (effectiveSize > 1300) {
+        // HUGE PACKETS: Hard cap math at 1300. 
+        // This ensures the nextSnapshotTime doesn't jump too far ahead.
+        effectiveSize = 1300;
+    } 
 
     // PRECISION MATH:
     // 1. We use 1000.0f to force floating point division.
