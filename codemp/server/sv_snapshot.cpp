@@ -675,9 +675,10 @@ to take to clear, based on the current rate
 */
 #define	HEADER_RATE_BYTES	48		// include our header, IP header, and some overhead
 static int SV_RateMsec( client_t *client, int messageSize ) {
-    int     rate;
-    int     rateMsec;
+    int rate;
+    float rateMsec; // Change this to float for internal precision
 
+    // individual messages will never be larger than fragment size
     if ( messageSize > 1500 ) {
         messageSize = 1500;
     }
@@ -692,11 +693,20 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
         if ( sv_minRate->integer > rate ) rate = sv_minRate->integer;
     }
 
-    // [STABILITY]: Use the original 48-byte header penalty
-    // This provides the stable rhythm the original engine expects
-    rateMsec = ( messageSize + HEADER_RATE_BYTES ) * 1000 / ((int) (rate * com_timescale->value));
+    // High-Ping Optimization: Cap the size so huge packets don't cause huge lag
+    int effectiveSize = messageSize;
+    if (effectiveSize > 1000) effectiveSize = 1000; 
 
-    return rateMsec;
+    // PRECISION MATH:
+    // 1. We use 1000.0f to force floating point division.
+    // 2. We use 48 to account for UDP/IP overhead.
+    float ts = (com_timescale->value < 0.1f) ? 0.1f : com_timescale->value;
+    
+    rateMsec = ((float)(effectiveSize + HEADER_RATE_BYTES) * 1000.0f) / ((float)rate * ts);
+
+    // 3. The +0.5f ensures correct rounding when converting back to int.
+    // This prevents 24.9ms from becoming 24ms (which causes jitter).
+    return (int)(rateMsec + 0.5f);
 }
 
 extern void SV_WriteDemoMessage ( client_t *cl, msg_t *msg, int headerBytes );
@@ -708,78 +718,75 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 =======================
 */
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
-    int rateMsec;
+	int			rateMsec;
 
-    // 1. Fragment Handling
-    // This clears out pending reliable data (like the initial gamestate) 
-    // to prevent "Illegible Server Message" errors.
-    while(client->state && client->netchan.unsentFragments) {
-        SV_Netchan_TransmitNextFragment(&client->netchan);
-    }
+	// MW - my attempt to fix illegible server message errors caused by
+	// packet fragmentation of initial snapshot.
+	while(client->state&&client->netchan.unsentFragments)
+	{
+		// send additional message fragments if the last message
+		// was too large to send at once
+		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+		SV_Netchan_TransmitNextFragment(&client->netchan);
+	}
 
-    // Record timing and size info for the current snapshot frame
-    int frameIdx = client->netchan.outgoingSequence & PACKET_MASK;
-    client->frames[frameIdx].messageSize = msg->cursize;
-    client->frames[frameIdx].messageSent = svs.time;
-    client->frames[frameIdx].messageAcked = -1;
+	// record information about the message
+	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
+	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
+	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = -1;
 
-    // 2. Demo Recording (Optimized for Dev Reports)
-    // Moving the copy inside the check prevents the server from doing unnecessary 
-    // memory work when you aren't recording a clip.
-    if ( client->demo.demorecording && !client->demo.demowaiting ) {
-        msg_t msgcopy = *msg; 
-        MSG_WriteByte( &msgcopy, svc_EOF );
-        SV_WriteDemoMessage( client, &msgcopy, 0 );
-    }
+	// save the message to demo.  this must happen before sending over network as that encodes the backing databuf
+	if ( client->demo.demorecording && !client->demo.demowaiting ) {
+		msg_t msgcopy = *msg;
+		MSG_WriteByte( &msgcopy, svc_EOF );
+		SV_WriteDemoMessage( client, &msgcopy, 0 );
+	}
 
-    // Bots do not need network transmission; they process the snapshot data internally.
-    if ( client->demo.isBot ) {
-        client->netchan.outgoingSequence++;
-        client->demo.botReliableAcknowledge = client->reliableSent;
-        return;
-    }
+	// bots need to have their snapshots built, but
+	// they query them directly without needing to be sent
+	if ( client->demo.isBot ) {
+		client->netchan.outgoingSequence++;
+		client->demo.botReliableAcknowledge = client->reliableSent;
+		return;
+	}
 
-    // Send the actual network packet over the internet
-    SV_Netchan_Transmit( client, msg );
+	// send the datagram
+	SV_Netchan_Transmit( client, msg );	//msg->cursize, msg->data );
 
-    // 3. Scale & Timing Logic
-    // Safety check: ensure timescale doesn't cause a divide-by-zero or crash
-    float timescale = (com_timescale->value < 0.1f) ? 0.1f : com_timescale->value;
+	// set nextSnapshotTime based on rate and requested number of updates
 
-    // Handle Local/LAN clients at max server speed
-    if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
-        client->nextSnapshotTime = svs.time + (int)((1000.0 / sv_fps->integer) * timescale);
-        return;
-    }
+	// local clients get snapshots every server frame
+	// TTimo - https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=491
+	// added sv_lanForceRate check
+	if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
+		client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
+		return;
+	}
 
-    // 4. Hybrid Rate & No-Choke Logic
-    // This is the primary fix for the "Teleporting" players at 225ms ping.
-    rateMsec = SV_RateMsec( client, msg->cursize );
+	// normal rate / snapshotMsec calculation
+	rateMsec = SV_RateMsec( client, msg->cursize );
 
-    if ( rateMsec < client->snapshotMsec ) {
-        // Bandwidth is healthy: send at requested snap rate (e.g., 25ms)
-        rateMsec = client->snapshotMsec;
-        client->rateDelayed = qfalse; 
-    } else {
-        // Bandwidth is saturated: delay only by 1ms to keep the rhythm steady.
-        // rateDelayed = qtrue tells the client to use smoothing/interpolation.
-        rateMsec = client->snapshotMsec + 1;
-        client->rateDelayed = qtrue; 
-    }
+	if ( rateMsec < client->snapshotMsec ) {
+		// never send more packets than this, no matter what the rate is at
+		rateMsec = client->snapshotMsec - 1;
+		client->rateDelayed = qfalse;
+	} else {
+		client->rateDelayed = qtrue;
+	}
 
-    // Final timing calculation
-    float timeDelay = (float)rateMsec * timescale;
-    client->nextSnapshotTime = svs.time + (int)timeDelay;
+	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
 
-    // 5. Connection/Download Safety
-    // Prevents snapshots from flooding a client while they are still loading or downloading.
-    if ( client->state != CS_ACTIVE ) {
-        int minWait = (int)(1000 * timescale);
-        if ( !*client->downloadName && client->nextSnapshotTime < svs.time + minWait ) {
-            client->nextSnapshotTime = svs.time + minWait;
-        }
-    }
+	// don't pile up empty snapshots while connecting
+	if ( client->state != CS_ACTIVE ) {
+		// a gigantic connection message may have already put the nextSnapshotTime
+		// more than a second away, so don't shorten it
+		// do shorten if client is downloading
+		if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
+			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
+		}
+	}
 }
+
 
 /*
 =======================
