@@ -676,9 +676,10 @@ to take to clear, based on the current rate
 #define	HEADER_RATE_BYTES	48		// include our header, IP header, and some overhead
 static int SV_RateMsec( client_t *client, int messageSize ) {
     int rate;
-    float rateMsec; // Change this to float for internal precision
+    float rateMsec;
 
-    // individual messages will never be larger than fragment size
+    // Hard cap at the engine's absolute MTU limit. 
+    // This ensures math never overflows for packets up to 1500 bytes.
     if ( messageSize > 1500 ) {
         messageSize = 1500;
     }
@@ -693,30 +694,16 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
         if ( sv_minRate->integer > rate ) rate = sv_minRate->integer;
     }
 
-    // --- Dynamic Min-Max Cap ---
-    // Capping at 1300 for the math allows 1500-byte fragments to clear 
-    // the "pipe" faster, preventing the "heavy" feeling for high-ping players.
-    int effectiveSize = messageSize;
-
-    if (effectiveSize < 1000) {
-        // SMALL PACKETS: Use actual size for perfect, snappy prediction.
-        effectiveSize = messageSize;
-    } 
-    else if (effectiveSize > 1300) {
-        // HUGE PACKETS: Hard cap math at 1300. 
-        // This ensures the nextSnapshotTime doesn't jump too far ahead.
-        effectiveSize = 1300;
-    } 
-
     // PRECISION MATH:
     // 1. We use 1000.0f to force floating point division.
-    // 2. We use 48 to account for UDP/IP overhead.
+    // 2. HEADER_RATE_BYTES (48) accounts for UDP/IP overhead.
     float ts = (com_timescale->value < 0.1f) ? 0.1f : com_timescale->value;
     
-    rateMsec = ((float)(effectiveSize + HEADER_RATE_BYTES) * 1000.0f) / ((float)rate * ts);
+    // The formula: (Total Bytes) * 1000ms / Bandwidth
+    rateMsec = ((float)(messageSize + HEADER_RATE_BYTES) * 1000.0f) / ((float)rate * ts);
 
-    // 3. The +0.5f ensures correct rounding when converting back to int.
-    // This prevents 24.9ms from becoming 24ms (which causes jitter).
+    // 3. The +0.5f ensures correct rounding to the nearest millisecond.
+    // This keeps the delivery rhythm consistent for the client.
     return (int)(rateMsec + 0.5f);
 }
 
@@ -779,7 +766,7 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 
 	if ( rateMsec < client->snapshotMsec ) {
 		// never send more packets than this, no matter what the rate is at
-		rateMsec = client->snapshotMsec - 1;
+		rateMsec = client->snapshotMsec;
 		client->rateDelayed = qfalse;
 	} else {
 		client->rateDelayed = qtrue;
