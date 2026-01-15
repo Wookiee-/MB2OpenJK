@@ -673,10 +673,10 @@ Return the number of msec a given size message is supposed
 to take to clear, based on the current rate
 ====================
 */
-#define	HEADER_RATE_BYTES	48		// include our header, IP header, and some overhead
+#define HEADER_RATE_BYTES 48
 static int SV_RateMsec( client_t *client, int messageSize ) {
     int rate;
-    double rateMsec; // Higher precision to prevent timing "wobble"
+    int rateMsec;
 
     // 1. MTU Safety Cap
     if ( messageSize > 1500 ) {
@@ -693,22 +693,23 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
         if ( sv_minRate->integer > rate ) rate = sv_minRate->integer;
     }
 
-    // 2. High-Precision Calculation
-    float ts = (com_timescale->value < 0.1f) ? 0.1f : com_timescale->value;
-    
-    // Formula using double precision for the intermediate math
-    rateMsec = ((double)(messageSize + HEADER_RATE_BYTES) * 1000.0) / ((double)rate * (double)ts);
+    // 2. Base Calculation (Stock Integer Math)
+    // We start with the original formula to maintain the "rhythm" the client expects.
+    rateMsec = (messageSize + HEADER_RATE_BYTES) * 1000 / (int)(rate * com_timescale->value);
 
-    // 3. THE JITTER KILLER: Snap-to-Grid
-    // If the calculation is within 1ms of the server frame (e.g., 24ms-26ms for 40fps),
-    // force it to be exactly 25ms. This stops models from "vibrating" while walking.
-    if ( rateMsec >= (double)(client->snapshotMsec - 1.0) && rateMsec <= (double)(client->snapshotMsec + 1.0) ) {
+    // 3. The Smoothing Logic
+    // If the integer math says it's within the standard 40fps window (25ms), 
+    // return exactly 25ms. This ensures other players don't "vibrate" when walking.
+    if ( rateMsec <= client->snapshotMsec ) {
         return client->snapshotMsec;
     }
 
-    // 4. Final Rounding for Combat Data
-    // Large packets (swings) fall outside the window and get precise timing.
-    return (int)(rateMsec + 0.5);
+    // 4. Combat Precision
+    // If it's a heavy packet (Saber Swings), switch to double precision 
+    // so the server doesn't "choke" and skip animation frames.
+    double precisionMsec = ((double)(messageSize + HEADER_RATE_BYTES) * 1000.0) / ((double)rate * (double)com_timescale->value);
+    
+    return (int)(precisionMsec + 0.5);
 }
 
 extern void SV_WriteDemoMessage ( client_t *cl, msg_t *msg, int headerBytes );
@@ -720,74 +721,73 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 =======================
 */
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
-    int            rateMsec;
+	int			rateMsec;
 
-    // MW - my attempt to fix illegible server message errors caused by
-    // packet fragmentation of initial snapshot.
-    while(client->state && client->netchan.unsentFragments)
-    {
-        // send additional message fragments if the last message
-        // was too large to send at once
-        Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
-        SV_Netchan_TransmitNextFragment(&client->netchan);
-    }
+	// MW - my attempt to fix illegible server message errors caused by
+	// packet fragmentation of initial snapshot.
+	while(client->state&&client->netchan.unsentFragments)
+	{
+		// send additional message fragments if the last message
+		// was too large to send at once
+		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+		SV_Netchan_TransmitNextFragment(&client->netchan);
+	}
 
-    // record information about the message
-    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
-    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
-    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = -1;
+	// record information about the message
+	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
+	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
+	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = -1;
 
-    // save the message to demo.  this must happen before sending over network as that encodes the backing databuf
-    if ( client->demo.demorecording && !client->demo.demowaiting ) {
-        msg_t msgcopy = *msg;
-        MSG_WriteByte( &msgcopy, svc_EOF );
-        SV_WriteDemoMessage( client, &msgcopy, 0 );
-    }
+	// save the message to demo.  this must happen before sending over network as that encodes the backing databuf
+	if ( client->demo.demorecording && !client->demo.demowaiting ) {
+		msg_t msgcopy = *msg;
+		MSG_WriteByte( &msgcopy, svc_EOF );
+		SV_WriteDemoMessage( client, &msgcopy, 0 );
+	}
 
-    // bots need to have their snapshots built, but
-    // they query them directly without needing to be sent
-    if ( client->demo.isBot ) {
-        client->netchan.outgoingSequence++;
-        client->demo.botReliableAcknowledge = client->reliableSent;
-        return;
-    }
+	// bots need to have their snapshots built, but
+	// they query them directly without needing to be sent
+	if ( client->demo.isBot ) {
+		client->netchan.outgoingSequence++;
+		client->demo.botReliableAcknowledge = client->reliableSent;
+		return;
+	}
 
-    // send the datagram
-    SV_Netchan_Transmit( client, msg );    //msg->cursize, msg->data
+	// send the datagram
+	SV_Netchan_Transmit( client, msg );	//msg->cursize, msg->data );
 
-    // set nextSnapshotTime based on rate and requested number of updates
+	// set nextSnapshotTime based on rate and requested number of updates
 
-    // local clients get snapshots every server frame
-    if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
-        client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
-        return;
-    }
+	// local clients get snapshots every server frame
+	// TTimo - https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=491
+	// added sv_lanForceRate check
+	if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
+		client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
+		return;
+	}
 
-    // normal rate / snapshotMsec calculation
-    rateMsec = SV_RateMsec( client, msg->cursize );
+	// normal rate / snapshotMsec calculation
+	rateMsec = SV_RateMsec( client, msg->cursize );
 
-    // --- Rhythmic Heartbeat Logic ---
-    // If the calculated rate delay is within or equal to our base snapshot timing (e.g., 25ms),
-    // lock it to the heartbeat. This prevents character models from "vibrating" during walk/run.
+	// Treat anything equal to the snapshot rate as "On Time" to prevent jitter
     if ( rateMsec <= client->snapshotMsec ) {
         client->nextSnapshotTime = svs.time + (int)(client->snapshotMsec * com_timescale->value);
         client->rateDelayed = qfalse;
     } else {
-        // If it's a heavy combat packet, allow the accurate delay so the client 
-        // doesn't "eat" the high-speed animations like saber swings.
+        // Allow the "Heavy" combat packets to delay accurately
         client->nextSnapshotTime = svs.time + (int)(rateMsec * com_timescale->value);
         client->rateDelayed = qtrue;
     }
 
-    // don't pile up empty snapshots while connecting
-    if ( client->state != CS_ACTIVE ) {
-        // a gigantic connection message may have already put the nextSnapshotTime
-        // more than a second away, so don't shorten it
-        // do shorten if client is downloading
-        if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
-            client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
-        }
-    }
+	// don't pile up empty snapshots while connecting
+	if ( client->state != CS_ACTIVE ) {
+		// a gigantic connection message may have already put the nextSnapshotTime
+		// more than a second away, so don't shorten it
+		// do shorten if client is downloading
+		if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
+			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
+		}
+	}
 }
 
 

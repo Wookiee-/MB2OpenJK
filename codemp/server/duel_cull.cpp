@@ -1,6 +1,10 @@
 #include "qcommon/qcommon.h"
 #include "duel_cull.h"
 
+// Persistent state trackers
+static qboolean oldDuelState[MAX_CLIENTS] = { qfalse };
+static int      duelOpponent[MAX_CLIENTS] = { 0 };
+
 static qboolean isPlayer(sharedEntity_t *ent) {
 	if (ent->s.eType == ET_PLAYER)
 		return qtrue;
@@ -70,7 +74,69 @@ static qboolean isDuelOpponent(sharedEntity_t *A, sharedEntity_t *B) { //wtf voi
 	return qfalse;
 }
 
+// Helper to extract clean names
+static void GetPlayerName(int clientNum, char *outName, int maxSize) {
+    char configstring[MAX_CONFIGSTRINGS];
+    const char *value;
+    if (clientNum < 0 || clientNum >= MAX_CLIENTS) {
+        Q_strncpyz(outName, "Unknown", maxSize);
+        return;
+    }
+    SV_GetConfigstring(CS_PLAYERS + clientNum, configstring, sizeof(configstring));
+    value = Info_ValueForKey(configstring, "n");
+    if (value && value[0]) {
+        Q_strncpyz(outName, value, maxSize);
+    } else {
+        Com_sprintf(outName, maxSize, "Player %d", clientNum);
+    }
+}
+
 int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
+    int entNum = ent->s.number;
+
+    // --- 1. LOGGING MODIFICATIONS ---
+    if (entNum >= 0 && entNum < MAX_CLIENTS && isPlayer(ent)) {
+        playerState_t *ps = GetPS(ent);
+        qboolean isCurrentlyDueling = (ps && ps->duelInProgress) ? qtrue : qfalse;
+
+        // START TRIGGER: Log when the duel begins
+        if (isCurrentlyDueling && !oldDuelState[entNum]) {
+            // Validate the opponent exists and isn't self
+            if (ps->duelIndex >= 0 && ps->duelIndex < MAX_CLIENTS && ps->duelIndex != entNum) {
+                
+                // Only log from the lower Client ID to prevent double-printing the start
+                if (entNum < ps->duelIndex) {
+                    char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
+                    GetPlayerName(entNum, p1Name, sizeof(p1Name));
+                    GetPlayerName(ps->duelIndex, p2Name, sizeof(p2Name));
+
+                    Com_Printf("DUEL_START: %s challenged %s to a private duel\n", p1Name, p2Name);
+                }
+                
+                duelOpponent[entNum] = ps->duelIndex;
+                oldDuelState[entNum] = qtrue;
+            }
+        }
+
+        // END TRIGGER: Log the outcome when the duel ends
+        else if (!isCurrentlyDueling && oldDuelState[entNum]) {
+            // Only the winner logs the 'defeated' message to keep it to one line
+            // In MB2 private duels, losers are set to 1 HP.
+            if (ps && ps->stats[STAT_HEALTH] > 1) {
+                char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
+                
+                GetPlayerName(entNum, winnerName, sizeof(winnerName));
+                GetPlayerName(duelOpponent[entNum], loserName, sizeof(loserName));
+
+                Com_Printf("DUEL_FINISH: %s has defeated %s in a private duel\n", winnerName, loserName);
+            }
+
+            // Cleanup state for the next duel
+            oldDuelState[entNum] = qfalse;
+            duelOpponent[entNum] = 0;
+        }
+    }
+
 	// The original cvar check remains the entry point.
 	if (!sv_snapShotDuelCull->integer)
 		return 0;
