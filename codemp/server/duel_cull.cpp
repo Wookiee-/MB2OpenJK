@@ -1,5 +1,6 @@
 #include "qcommon/qcommon.h"
 #include "duel_cull.h"
+#include "sv_gameapi.h"
 
 // Persistent state trackers
 static qboolean oldDuelState[MAX_CLIENTS] = { qfalse };
@@ -110,7 +111,7 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
                     GetPlayerName(entNum, p1Name, sizeof(p1Name));
                     GetPlayerName(ps->duelIndex, p2Name, sizeof(p2Name));
 
-                    Com_Printf("DUEL_START: %s challenged %s to a private duel\n", p1Name, p2Name);
+                    GVM_LogPrintf("DUEL_START: %s challenged %s to a private duel\n", p1Name, p2Name);
                 }
                 
                 duelOpponent[entNum] = ps->duelIndex;
@@ -128,7 +129,7 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
                 GetPlayerName(entNum, winnerName, sizeof(winnerName));
                 GetPlayerName(duelOpponent[entNum], loserName, sizeof(loserName));
 
-                Com_Printf("DUEL_FINISH: %s has defeated %s in a private duel\n", winnerName, loserName);
+                GVM_LogPrintf("DUEL_FINISH: %s has defeated %s in a private duel\n", winnerName, loserName);
             }
 
             // Cleanup state for the next duel

@@ -771,13 +771,14 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 
 	// Treat anything equal to the snapshot rate as "On Time" to prevent jitter
     if ( rateMsec <= client->snapshotMsec ) {
-        client->nextSnapshotTime = svs.time + (int)(client->snapshotMsec * com_timescale->value);
+        rateMsec = client->snapshotMsec;
         client->rateDelayed = qfalse;
     } else {
-        // Allow the "Heavy" combat packets to delay accurately
-        client->nextSnapshotTime = svs.time + (int)(rateMsec * com_timescale->value);
         client->rateDelayed = qtrue;
     }
+
+    // Multiply by timescale at the very end
+    client->nextSnapshotTime = svs.time + (int)(rateMsec * com_timescale->value);
 
 	// don't pile up empty snapshots while connecting
 	if ( client->state != CS_ACTIVE ) {
