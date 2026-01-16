@@ -673,43 +673,36 @@ Return the number of msec a given size message is supposed
 to take to clear, based on the current rate
 ====================
 */
-#define HEADER_RATE_BYTES 48
+#define	HEADER_RATE_BYTES	48		// include our header, IP header, and some overhead
 static int SV_RateMsec( client_t *client, int messageSize ) {
-    int rate;
-    int rateMsec;
+	int		rate;
+	int		rateMsec;
 
-    // 1. MTU Safety Cap
-    if ( messageSize > 1500 ) {
-        messageSize = 1500;
-    }
+	// individual messages will never be larger than fragment size
+	if ( messageSize > 1500 ) {
+		messageSize = 1500;
+	}
+	rate = client->rate;
+	if ( sv_maxRate->integer ) {
+		if ( sv_maxRate->integer < 1000 ) {
+			Cvar_Set( "sv_MaxRate", "1000" );
+		}
+		if ( sv_maxRate->integer < rate ) {
+			rate = sv_maxRate->integer;
+		}
+	}
+	if ( sv_minRate->integer ) {
+		if ( sv_minRate->integer < 1000 ) {
+			Cvar_Set( "sv_minRate", "1000" );
+		}
+		if ( sv_minRate->integer > rate ) {
+			rate = sv_minRate->integer;
+		}
+	}
 
-    rate = client->rate;
-    if ( sv_maxRate->integer ) {
-        if ( sv_maxRate->integer < 1000 ) Cvar_Set( "sv_MaxRate", "1000" );
-        if ( sv_maxRate->integer < rate ) rate = sv_maxRate->integer;
-    }
-    if ( sv_minRate->integer ) {
-        if ( sv_minRate->integer < 1000 ) Cvar_Set( "sv_minRate", "1000" );
-        if ( sv_minRate->integer > rate ) rate = sv_minRate->integer;
-    }
+	rateMsec = ( messageSize + HEADER_RATE_BYTES ) * 1000 / ((int) (rate * com_timescale->value));
 
-    // 2. Base Calculation (Stock Integer Math)
-    // We start with the original formula to maintain the "rhythm" the client expects.
-    rateMsec = (messageSize + HEADER_RATE_BYTES) * 1000 / (int)(rate * com_timescale->value);
-
-    // 3. The Smoothing Logic
-    // If the integer math says it's within the standard 40fps window (25ms), 
-    // return exactly 25ms. This ensures other players don't "vibrate" when walking.
-    if ( rateMsec <= client->snapshotMsec ) {
-        return client->snapshotMsec;
-    }
-
-    // 4. Combat Precision
-    // If it's a heavy packet (Saber Swings), switch to double precision 
-    // so the server doesn't "choke" and skip animation frames.
-    double precisionMsec = ((double)(messageSize + HEADER_RATE_BYTES) * 1000.0) / ((double)rate * (double)com_timescale->value);
-    
-    return (int)(precisionMsec + 0.5);
+	return rateMsec;
 }
 
 extern void SV_WriteDemoMessage ( client_t *cl, msg_t *msg, int headerBytes );
@@ -761,32 +754,23 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	// local clients get snapshots every server frame
 	// TTimo - https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=491
 	// added sv_lanForceRate check
-	if ( client->netchan.remoteAddress.type == NA_LOOPBACK || 
-        (sv_lanForceRate->integer && Sys_IsLANAddress(client->netchan.remoteAddress)) ) {
-        
-        int lanDelay = (int)(1000.0 / sv_fps->integer * com_timescale->value);
-        client->nextSnapshotTime = svs.time + lanDelay;
-
-        // Safety clamp for local connect
-        if (client->nextSnapshotTime <= svs.time) {
-            client->nextSnapshotTime = svs.time + 1;
-        }
-        return;
-    }
+	if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
+		client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
+		return;
+	}
 
 	// normal rate / snapshotMsec calculation
 	rateMsec = SV_RateMsec( client, msg->cursize );
 
-	// Treat anything equal to the snapshot rate as "On Time" to prevent jitter
-    if ( rateMsec <= client->snapshotMsec ) {
-        rateMsec = client->snapshotMsec;
-        client->rateDelayed = qfalse;
-    } else {
-        client->rateDelayed = qtrue;
-    }
+	if ( rateMsec < client->snapshotMsec ) {
+		// never send more packets than this, no matter what the rate is at
+		rateMsec = client->snapshotMsec;
+		client->rateDelayed = qfalse;
+	} else {
+		client->rateDelayed = qtrue;
+	}
 
-    // Multiply by timescale at the very end
-    client->nextSnapshotTime = svs.time + (int)(rateMsec * com_timescale->value);
+	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
 
 	// don't pile up empty snapshots while connecting
 	if ( client->state != CS_ACTIVE ) {
@@ -797,10 +781,6 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
 		}
 	}
-
-	if ( client->nextSnapshotTime <= svs.time ) {
-        client->nextSnapshotTime = svs.time + 1;
-    }
 }
 
 
