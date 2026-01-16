@@ -3158,3 +3158,18 @@ void SV_RestartGame( void ) {
 
 	SV_InitGame( qtrue );
 }
+
+void GVM_LogPrintf( const char *fmt, ... ) {
+	va_list		argptr;
+	char		text[1024];
+
+	va_start (argptr, fmt);
+	Q_vsnprintf (text, sizeof(text), fmt, argptr);
+	va_end (argptr);
+
+	// This is the safe engine-side call that writes to the game log 
+	// without crossing the VM boundary during a frame.
+	if (text[0]) {
+		Com_Printf( "%s", text ); 
+	}
+}
