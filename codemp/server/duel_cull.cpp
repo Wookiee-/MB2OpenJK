@@ -131,7 +131,7 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
                     GetPlayerName(entNum, p1Name, sizeof(p1Name));
                     GetPlayerName(ps->duelIndex, p2Name, sizeof(p2Name));
 
-                    GVM_LogPrintf("DUEL_START: %s challenged %s to a private duel\n", p1Name, p2Name);
+                    GVM_LogPrintf("DuelStart: %s challenged %s to a private duel\n", p1Name, p2Name);
                 }
                 
                 duelOpponent[entNum] = ps->duelIndex;
@@ -149,7 +149,7 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
                 GetPlayerName(entNum, winnerName, sizeof(winnerName));
                 GetPlayerName(duelOpponent[entNum], loserName, sizeof(loserName));
 
-                GVM_LogPrintf("DUEL_FINISH: %s has defeated %s in a private duel\n", winnerName, loserName);
+                GVM_LogPrintf("DuelEnd: %s has defeated %s in a private duel\n", winnerName, loserName);
             }
 
             // Cleanup state for the next duel

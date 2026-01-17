@@ -21,7 +21,8 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, see <http://www.gnu.org/licenses/>.
 ===========================================================================
 */
-
+#include <stdio.h>
+#include <time.h>
 #include "server.h"
 
 #include "ghoul2/ghoul2_shared.h"
@@ -76,6 +77,8 @@ cvar_t	*sv_snapShotDuelCull;
 
 serverBan_t serverBans[SERVER_MAXBANS];
 int serverBansCount = 0;
+fileHandle_t sv_logFile = 0;
+fileHandle_t sv_duelLogHandle = 0;
 
 /*
 =============================================================================
@@ -1252,5 +1255,64 @@ void SV_Frame( int msec ) {
 	SV_MasterHeartbeat();
 }
 
+/*
+==================
+SV_LogPrintf
+
+New bridge function to write directly to games.log from the engine side.
+==================
+*/
+
+void SV_LogPrintf( const char *fmt, ... ) {
+	va_list		argptr;
+	static char	text[1024];
+	static char	timestampedText[1150];
+	const char	*logName;
+	
+	// 1. Calculate Engine Time (Matches the internal server clock)
+	int seconds = svs.time / 1000;
+	int mins = seconds / 60;
+	int secs = seconds % 60;
+
+	va_start (argptr, fmt);
+	Q_vsnprintf (text, sizeof(text), fmt, argptr);
+	va_end (argptr);
+
+	if ( !text[0] ) return;
+
+	// 2. Format with exact engine spacing (%3i:%02i)
+	Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", mins, secs, text);
+
+	// 3. Output to Console (Visible in Windows CMD window)
+	Com_Printf( "%s", timestampedText );
+
+	logName = Cvar_VariableString( "g_log" );
+	if ( !logName || !logName[0] ) return;
+
+#ifdef _WIN32
+	// --- WINDOWS SERVER PATHING ---
+	char fullPath[MAX_OSPATH];
+	const char *homePath = Cvar_VariableString("fs_homepath");
+	
+	if (homePath && homePath[0]) {
+		// This builds the absolute path for the Windows Server file system
+		Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
+		
+		FILE *f = fopen(fullPath, "a");
+		if (f) {
+			fprintf(f, "%s", timestampedText);
+			fflush(f); 
+			fclose(f);
+		}
+	}
+#else
+	// --- LINUX SERVER PATHING ---
+	fileHandle_t f = FS_SV_FOpenFileAppend(logName);
+	if (f) {
+		FS_Write(timestampedText, strlen(timestampedText), f);
+		FS_FCloseFile(f);
+	}
+#endif
+}
 //============================================================================
 
