@@ -1262,55 +1262,50 @@ New bridge function to write directly to games.log from the engine side.
 */
 
 void SV_LogPrintf( const char *fmt, ... ) {
-	va_list		argptr;
-	static char	text[1024];
-	static char	timestampedText[1150];
-	const char	*logName;
-	
-	// 1. Calculate Engine Time (Matches the internal server clock)
-	int seconds = svs.time / 1000;
-	int mins = seconds / 60;
-	int secs = seconds % 60;
+    va_list     argptr;
+    static char text[1024];
+    static char timestampedText[1150];
+    const char  *logName;
+    
+    // 1. Calculate Engine Time (Matches the 3:09 format)
+    int seconds = svs.time / 1000;
+    int mins = seconds / 60;
+    int secs = seconds % 60;
 
-	va_start (argptr, fmt);
-	Q_vsnprintf (text, sizeof(text), fmt, argptr);
-	va_end (argptr);
+    va_start (argptr, fmt);
+    Q_vsnprintf (text, sizeof(text), fmt, argptr);
+    va_end (argptr);
 
-	if ( !text[0] ) return;
+    if ( !text[0] ) return;
 
-	// 2. Format with exact engine spacing (%3i:%02i)
-	Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", mins, secs, text);
+    // 2. Format with exact engine spacing
+    Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", mins, secs, text);
 
-	// 3. Output to Console (Visible in Windows CMD window)
-	Com_Printf( "%s", timestampedText );
+    // 3. Output to Console
+    Com_Printf( "%s", timestampedText );
 
-	logName = Cvar_VariableString( "g_log" );
-	if ( !logName || !logName[0] ) return;
+    logName = Cvar_VariableString( "g_log" ); // This should be "duel-games.log"
+    if ( !logName || !logName[0] ) return;
 
-#ifdef _WIN32
-	// --- WINDOWS SERVER PATHING ---
-	char fullPath[MAX_OSPATH];
-	const char *homePath = Cvar_VariableString("fs_homepath");
-	
-	if (homePath && homePath[0]) {
-		// This builds the absolute path for the Windows Server file system
-		Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
-		
-		FILE *f = fopen(fullPath, "a");
-		if (f) {
-			fprintf(f, "%s", timestampedText);
-			fflush(f); 
-			fclose(f);
-		}
-	}
-#else
-	// --- LINUX SERVER PATHING ---
-	fileHandle_t f = FS_SV_FOpenFileAppend(logName);
-	if (f) {
-		FS_Write(timestampedText, strlen(timestampedText), f);
-		FS_FCloseFile(f);
-	}
-#endif
+    // --- DIRECT FILE WRITING (Reliable for Linux & Windows) ---
+    char fullPath[MAX_OSPATH];
+    const char *homePath = Cvar_VariableString("fs_homepath");
+
+    if (homePath && homePath[0]) {
+        // Construct the path manually to avoid Engine VFS issues
+        // This will result in: /home/mbiiez/openjk/MBII/duel-games.log
+        Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
+        
+        FILE *f = fopen(fullPath, "a");
+        if (f) {
+            fprintf(f, "%s", timestampedText);
+            fflush(f); 
+            fclose(f);
+        } else {
+            // If it fails, print a warning to the server console so you know why
+            Com_Printf("ERROR: Could not write to log file at %s\n", fullPath);
+        }
+    }
 }
 //============================================================================
 

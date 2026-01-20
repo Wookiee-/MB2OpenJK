@@ -115,23 +115,32 @@ static void GetPlayerName(int clientNum, char *outName, int maxSize) {
 int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
     int entNum = ent->s.number;
 
-    // --- 1. LOGGING MODIFICATIONS ---
-    if (entNum >= 0 && entNum < MAX_CLIENTS && isPlayer(ent)) {
-        playerState_t *ps = GetPS(ent);
-        qboolean isCurrentlyDueling = (ps && ps->duelInProgress) ? qtrue : qfalse;
+    // --- 1. DEFINE VARIABLES ---
+    // We must define 'ps' and 'isCurrentlyDueling' before the if-statements use them
+    playerState_t *ps = GetPS(ent);
+    qboolean isCurrentlyDueling = (ps && ps->duelInProgress) ? qtrue : qfalse;
 
+    // Now the logic will work because the compiler knows what 'ps' is
+    if (entNum >= 0 && entNum < MAX_CLIENTS && isPlayer(ent)) {
+        
         // START TRIGGER: Log when the duel begins
         if (isCurrentlyDueling && !oldDuelState[entNum]) {
-            // Validate the opponent exists and isn't self
-            if (ps->duelIndex >= 0 && ps->duelIndex < MAX_CLIENTS && ps->duelIndex != entNum) {
+            if (ps && ps->duelIndex >= 0 && ps->duelIndex < MAX_CLIENTS && ps->duelIndex != entNum) {
                 
-                // Only log from the lower Client ID to prevent double-printing the start
                 if (entNum < ps->duelIndex) {
                     char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
                     GetPlayerName(entNum, p1Name, sizeof(p1Name));
                     GetPlayerName(ps->duelIndex, p2Name, sizeof(p2Name));
 
-                    GVM_LogPrintf("DuelStart: %s challenged %s to a private duel\n", p1Name, p2Name);
+                    int p1HP = (int)ps->stats[0];
+                    int p1BP = (int)ps->stats[8];
+                    
+                    playerState_t *ops = GetPS(SV_GentityNum(ps->duelIndex));
+                    int p2HP = ops ? (int)ops->stats[0] : 0;
+                    int p2BP = ops ? (int)ops->stats[8] : 0;
+
+                    GVM_LogPrintf("DuelStart: %s (H:%i B:%i) vs %s (H:%i B:%i)\n", 
+                                   p1Name, p1HP, p1BP, p2Name, p2HP, p2BP);
                 }
                 
                 duelOpponent[entNum] = ps->duelIndex;
@@ -139,65 +148,72 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
             }
         }
 
-        // END TRIGGER: Log the outcome when the duel ends
+        // END TRIGGER: Log when the duel ends
         else if (!isCurrentlyDueling && oldDuelState[entNum]) {
-            // Only the winner logs the 'defeated' message to keep it to one line
-            // In MB2 private duels, losers are set to 1 HP.
-            if (ps && ps->stats[STAT_HEALTH] > 1) {
+            if (ps && ps->stats[0] > 1) { 
                 char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
-                
-                GetPlayerName(entNum, winnerName, sizeof(winnerName));
-                GetPlayerName(duelOpponent[entNum], loserName, sizeof(loserName));
+                int winHP = (int)ps->stats[0];
+                int winBP = (int)ps->stats[8];
 
-                GVM_LogPrintf("DuelEnd: %s has defeated %s in a private duel\n", winnerName, loserName);
+                GetPlayerName(entNum, winnerName, sizeof(winnerName));
+                
+                int loserIdx = duelOpponent[entNum];
+                if (loserIdx >= 0 && loserIdx < MAX_CLIENTS) {
+                    GetPlayerName(loserIdx, loserName, sizeof(loserName));
+                    
+                    playerState_t *lps = GetPS(SV_GentityNum(loserIdx));
+                    
+                    // If health is negative, just show 0 for a cleaner look
+                    int losHP = (lps && lps->stats[0] > 0) ? (int)lps->stats[0] : 0;
+                    int losBP = lps ? (int)lps->stats[8] : 0;
+
+                    GVM_LogPrintf("DuelEnd: %s (H:%i B:%i) defeated %s (H:%i B:%i)\n", 
+                                   winnerName, winHP, winBP, 
+                                   loserName, losHP, losBP);
+                }
             }
 
-            // Cleanup state for the next duel
             oldDuelState[entNum] = qfalse;
             duelOpponent[entNum] = 0;
         }
-    }
+    }    
 
-	// The original cvar check remains the entry point.
-	if (!sv_snapShotDuelCull->integer)
-		return 0;
+    // --- 2. ORIGINAL CULLING LOGIC ---
+    if (!sv_snapShotDuelCull->integer)
+        return 0;
 
-	if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
+    if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
         return 0; 
     }
 
-	auto culledTouch = flatten(touch);
+    auto culledTouch = flatten(touch);
 
-	if (!isActor(ent)) {
-		return 0;
-	}
+    if (!isActor(ent)) {
+        return 0;
+    }
 
-	// --- 2. Refining Actor Culling Logic / Duelist Culling ---
-	if (isDueling(ent)) {
-		if (isDuelOpponent(ent, culledTouch)) {
-			return 0; // Don't cull.
-		}
-		if (isActor(culledTouch)) {
-			return 1; // Cull other actors and their direct events.
-		}
-		if (touch->r.ownerNum != ENTITYNUM_NONE) {
-			sharedEntity_t *owner = SV_GentityNum(touch->r.ownerNum);
+    if (isDueling(ent)) {
+        if (isDuelOpponent(ent, culledTouch)) {
+            return 0; 
+        }
+        if (isActor(culledTouch)) {
+            return 1; 
+        }
+        if (touch->r.ownerNum != ENTITYNUM_NONE) {
+            sharedEntity_t *owner = SV_GentityNum(touch->r.ownerNum);
+            if (isActor(owner) && !isDuelOpponent(ent, owner)) {
+                return 1;
+            }
+        }
+        return 0;
+    }
 
-			if (isActor(owner) && !isDuelOpponent(ent, owner)) {
-				return 1;
-			}
-		}
+    if (isActor(culledTouch)) {
+        if (isDueling(culledTouch)) {
+            return 2; 
+        }
+        return 0; 
+    }
 
-		return 0;
-	}
-
-
-	if (isActor(culledTouch)) {
-		if (isDueling(culledTouch)) {
-			return 2; // Don't cull and don't clip (spectating).
-		}
-		return 0; // Don't cull.
-	}
-
-	return 0;
+    return 0;
 }
