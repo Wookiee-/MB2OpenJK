@@ -3158,14 +3158,3 @@ void SV_RestartGame( void ) {
 
 	SV_InitGame( qtrue );
 }
-
-
-void GVM_LogPrintf( const char *fmt, ... ) {
-	va_list argptr;
-	char text[1024];
-	va_start(argptr, fmt);
-	Q_vsnprintf(text, sizeof(text), fmt, argptr);
-	va_end(argptr);
-
-	SV_LogPrintf("%s", text);
-}

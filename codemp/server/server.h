@@ -316,9 +316,6 @@ void SV_RemoveOperatorCommands (void);
 void SV_MasterHeartbeat (void);
 void SV_MasterShutdown (void);
 
-void SV_LogPrintf( const char *fmt, ... );
-
-
 //
 // sv_init.c
 //

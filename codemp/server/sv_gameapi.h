@@ -60,7 +60,6 @@ qboolean	GVM_NAV_EntIsBreakable				( int entityNum );
 qboolean	GVM_NAV_EntIsRemovableUsable		( int entNum );
 void		GVM_NAV_FindCombatPointWaypoints	( void );
 int			GVM_BG_GetItemIndexByTag			( int tag, int type );
-void 		GVM_LogPrintf						( const char *fmt, ... );
 
 void SV_BindGame( void );
 void SV_UnbindGame( void );
