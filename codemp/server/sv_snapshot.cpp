@@ -723,6 +723,8 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	int			rateMsec;
 
+	// MW - my attempt to fix illegible server message errors caused by
+	// packet fragmentation of initial snapshot.
     // NEW: Prevents one laggy player from hanging the whole server thread
     if (client->state && client->netchan.unsentFragments) {
         SV_Netchan_TransmitNextFragment(&client->netchan);
