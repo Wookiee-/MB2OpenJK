@@ -206,6 +206,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	snapFlags = svs.snapFlagServerBit;
 	if ( client->rateDelayed ) {
 		snapFlags |= SNAPFLAG_RATE_DELAYED;
+		frame->ps.m_iVehicleNum = 0; 
 	}
 	if ( client->state != CS_ACTIVE ) {
 		snapFlags |= SNAPFLAG_NOT_ACTIVE;
@@ -281,16 +282,22 @@ SV_UpdateServerCommandsToClient
 */
 void SV_UpdateServerCommandsToClient( client_t *client, msg_t *msg ) {
 	int		i;
-	int		reliableAcknowledge;
+	int		ack;
 
+	// Use bot-specific acknowledge if recording a bot demo
 	if ( client->demo.isBot && client->demo.demorecording ) {
-		reliableAcknowledge = client->demo.botReliableAcknowledge;
+		ack = client->demo.botReliableAcknowledge;
 	} else {
-		reliableAcknowledge = client->reliableAcknowledge;
+		ack = client->reliableAcknowledge;
 	}
 
 	// write any unacknowledged serverCommands
-	for ( i = reliableAcknowledge + 1 ; i <= client->reliableSequence ; i++ ) {
+	for ( i = ack + 1 ; i <= client->reliableSequence ; i++ ) {
+		if ( msg->cursize > (MAX_MSGLEN - 2048) ) { 
+			Com_DPrintf("WARNING: Throttling reliable commands for %s to prevent overflow\n", client->name);
+			break; 
+		}
+
 		MSG_WriteByte( msg, svc_serverCommand );
 		MSG_WriteLong( msg, i );
 		MSG_WriteString( msg, client->reliableCommands[ i & (MAX_RELIABLE_COMMANDS-1) ] );
@@ -360,7 +367,7 @@ static void SV_AddEntToSnapshot( svEntity_t *svEnt, sharedEntity_t *gEnt, snapsh
 SV_AddEntitiesVisibleFromPoint
 ===============
 */
-float g_svCullDist = -1.0f;
+float g_svCullDist = 4096.0f;
 static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *frame,
 #ifndef DEDICATED
 									snapshotEntityNumbers_t *eNums, qboolean portal )
@@ -679,8 +686,8 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 	int		rateMsec;
 
 	// individual messages will never be larger than fragment size
-	if ( messageSize > 1500 ) {
-		messageSize = 1500;
+	if ( messageSize > MAX_MSGLEN ) {
+		messageSize = MAX_MSGLEN;
 	}
 	rate = client->rate;
 	if ( sv_maxRate->integer ) {
@@ -716,15 +723,13 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	int			rateMsec;
 
-	// MW - my attempt to fix illegible server message errors caused by
-	// packet fragmentation of initial snapshot.
-	while(client->state&&client->netchan.unsentFragments)
-	{
-		// send additional message fragments if the last message
-		// was too large to send at once
-		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
-		SV_Netchan_TransmitNextFragment(&client->netchan);
-	}
+    // NEW: Prevents one laggy player from hanging the whole server thread
+    if (client->state && client->netchan.unsentFragments) {
+        SV_Netchan_TransmitNextFragment(&client->netchan);
+        // Calculate when the next fragment can go out based on rate
+        client->nextSnapshotTime = svs.time + SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
+        return; 
+    }
 
 	// record information about the message
 	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
@@ -799,7 +804,6 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 	if (!client->sentGamedir)
 	{ //rww - if this is the case then make sure there is an svc_setgame sent before this snap
-		int i = 0;
 
 		MSG_Init (&msg, msg_buf, sizeof(msg_buf));
 
@@ -808,25 +812,18 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 		MSG_WriteByte (&msg, svc_setgame);
 
-		const char *gamedir = FS_GetCurrentGameDir(true);
-
-		while (gamedir[i])
-		{
-			MSG_WriteByte(&msg, gamedir[i]);
-			i++;
-		}
-		MSG_WriteByte(&msg, 0);
+		MSG_WriteString(&msg, FS_GetCurrentGameDir(true));
 
 		// MW - my attempt to fix illegible server message errors caused by
 		// packet fragmentation of initial snapshot.
 		//rww - reusing this code here
-		while(client->state&&client->netchan.unsentFragments)
-		{
-			// send additional message fragments if the last message
-			// was too large to send at once
-			Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
-			SV_Netchan_TransmitNextFragment(&client->netchan);
-		}
+		if (client->state && client->netchan.unsentFragments)
+        {
+            SV_Netchan_TransmitNextFragment(&client->netchan);
+            // Spacing out fragments based on the client's 'rate'
+            client->nextSnapshotTime = svs.time + SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
+            return; // Exit and let the server process other players
+        }
 
 		// record information about the message
 		client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg.cursize;
@@ -873,9 +870,16 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 	// check for overflow
 	if ( msg.overflowed ) {
-		Com_Printf ("WARNING: msg overflowed for %s\n", client->name);
-		MSG_Clear (&msg);
-	}
+        Com_Printf ("WARNING: msg overflowed for %s - Reducing Data...\n", client->name);
+        MSG_Clear (&msg);
+
+        MSG_Init (&msg, msg_buf, sizeof(msg_buf));
+        MSG_WriteLong( &msg, client->lastClientCommand );
+        SV_UpdateServerCommandsToClient( client, &msg );
+
+        client->rateDelayed = qtrue; 
+        SV_WriteSnapshotToClient( client, &msg );
+    }
 
 	SV_SendMessageToClient( &msg, client );
 }
@@ -903,10 +907,10 @@ void SV_SendClientMessages( void ) {
 		// send additional message fragments if the last message
 		// was too large to send at once
 		if ( c->netchan.unsentFragments ) {
-			c->nextSnapshotTime = svs.time +
-				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
-			SV_Netchan_TransmitNextFragment( &c->netchan );
-			continue;
+		    c->nextSnapshotTime = svs.time +
+		        SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
+		    SV_Netchan_TransmitNextFragment( &c->netchan );
+		    continue;
 		}
 
 		// generate and send a new message

@@ -158,7 +158,6 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
         }
     }
 
-
     // --- 2. ORIGINAL CULLING LOGIC ---
     if (!sv_snapShotDuelCull->integer)
         return 0;
