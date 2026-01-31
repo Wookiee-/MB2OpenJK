@@ -122,42 +122,49 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
 
         // START TRIGGER: Log when the duel begins
         if (isCurrentlyDueling && !oldDuelState[entNum]) {
-            // Validate the opponent exists and isn't self
-            if (ps->duelIndex >= 0 && ps->duelIndex < MAX_CLIENTS && ps->duelIndex != entNum) {
+            // Validate the opponent exists and is actually the person we are dueling
+            int targetIdx = ps->duelIndex;
+            if (targetIdx >= 0 && targetIdx < MAX_CLIENTS && targetIdx != entNum) {
                 
-                // Only log from the lower Client ID to prevent double-printing the start
-                if (entNum < ps->duelIndex) {
+                // CRITICAL FILTER: Only print if this player's ID is lower than the target
+                // This prevents a 3rd party or the opponent from double-printing
+                if (entNum < targetIdx) {
                     char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
                     GetPlayerName(entNum, p1Name, sizeof(p1Name));
-                    GetPlayerName(ps->duelIndex, p2Name, sizeof(p2Name));
+                    GetPlayerName(targetIdx, p2Name, sizeof(p2Name));
 
                     GVM_LogPrintf("DuelStart: %s challenged %s to a private duel\n", p1Name, p2Name);
                 }
                 
-                duelOpponent[entNum] = ps->duelIndex;
+                duelOpponent[entNum] = targetIdx;
                 oldDuelState[entNum] = qtrue;
             }
         }
 
         // END TRIGGER: Log the outcome when the duel ends
         else if (!isCurrentlyDueling && oldDuelState[entNum]) {
-            // Only the winner logs the 'defeated' message to keep it to one line
-            // In MB2 private duels, losers are set to 1 HP.
+            // Only the winner prints the log. 
+            // We check health > 1 because MB2 sets the loser to exactly 1 HP.
             if (ps && ps->stats[STAT_HEALTH] > 1) {
-                char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
+                int loserIdx = duelOpponent[entNum];
                 
-                GetPlayerName(entNum, winnerName, sizeof(winnerName));
-                GetPlayerName(duelOpponent[entNum], loserName, sizeof(loserName));
+                // Double-check the opponent index still makes sense
+                if (loserIdx >= 0 && loserIdx < MAX_CLIENTS) {
+                    char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
+                    
+                    GetPlayerName(entNum, winnerName, sizeof(winnerName));
+                    GetPlayerName(loserIdx, loserName, sizeof(loserName));
 
-                GVM_LogPrintf("DuelEnd: %s has defeated %s in a private duel\n", winnerName, loserName);
+                    GVM_LogPrintf("DuelEnd: %s has defeated %s in a private duel\n", winnerName, loserName);
+                }
             }
 
-            // Cleanup state for the next duel
+            // Always reset for both players
             oldDuelState[entNum] = qfalse;
             duelOpponent[entNum] = 0;
         }
     }
-
+    
     // --- 2. ORIGINAL CULLING LOGIC ---
     if (!sv_snapShotDuelCull->integer)
         return 0;
