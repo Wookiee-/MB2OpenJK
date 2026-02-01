@@ -375,127 +375,181 @@ SV_AddEntitiesVisibleFromPoint
 float g_svCullDist = 4096.0f;
 static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *frame,
 #ifndef DEDICATED
-                                    snapshotEntityNumbers_t *eNums, qboolean portal )
+									snapshotEntityNumbers_t *eNums, qboolean portal )
 #else
-                                    snapshotEntityNumbers_t *eNums, qboolean portal, qboolean skipDuelCull )
+									snapshotEntityNumbers_t *eNums, qboolean portal, qboolean skipDuelCull )
 #endif
 {
-    int         e, i;
-    sharedEntity_t *ent;
-    svEntity_t    *svEnt;
-    int         l;
-    int         clientarea, clientcluster;
-    int         leafnum;
-    byte    *clientpvs;
-    byte    *bitvector;
-    vec3_t    difference;
-    float    length, radius;
+	int		e, i;
+	sharedEntity_t *ent;
+	svEntity_t	*svEnt;
+	int		l;
+	int		clientarea, clientcluster;
+	int		leafnum;
+	byte	*clientpvs;
+	byte	*bitvector;
+	vec3_t	difference;
+	float	length, radius;
 
-    if ( !sv.state ) {
-        return;
-    }
+	// during an error shutdown message we may need to transmit
+	// the shutdown message after the server has shutdown, so
+	// specfically check for it
+	if ( !sv.state ) {
+		return;
+	}
 
-    leafnum = CM_PointLeafnum (origin);
-    clientarea = CM_LeafArea (leafnum);
-    clientcluster = CM_LeafCluster (leafnum);
-    frame->areabytes = CM_WriteAreaBits( frame->areabits, clientarea );
-    clientpvs = CM_ClusterPVS (clientcluster);
+	leafnum = CM_PointLeafnum (origin);
+	clientarea = CM_LeafArea (leafnum);
+	clientcluster = CM_LeafCluster (leafnum);
 
-    for ( e = 0 ; e < sv.num_entities ; e++ ) {
-        ent = SV_GentityNum(e);
+	// calculate the visible areas
+	frame->areabytes = CM_WriteAreaBits( frame->areabits, clientarea );
 
-        if ( !ent->r.linked || (ent->s.eFlags & EF_PERMANENT) ) {
-            continue;
-        }
+	clientpvs = CM_ClusterPVS (clientcluster);
 
-        if (ent->s.number != e) {
-            ent->s.number = e;
-        }
+	for ( e = 0 ; e < sv.num_entities ; e++ ) {
+		ent = SV_GentityNum(e);
 
-        if ( (ent->r.svFlags & SVF_NOCLIENT) ) {
-            continue;
-        }
+		// never send entities that aren't linked in
+		if ( !ent->r.linked ) {
+			continue;
+		}
 
-        if ( ent->r.svFlags & SVF_SINGLECLIENT ) {
-            if ( ent->r.singleClient != frame->ps.clientNum ) continue;
-        }
-        if ( ent->r.svFlags & SVF_NOTSINGLECLIENT ) {
-            if ( ent->r.singleClient == frame->ps.clientNum ) continue;
-        }
+		if (ent->s.eFlags & EF_PERMANENT)
+		{	// he's permanent, so don't send him down!
+			continue;
+		}
 
+		if (ent->s.number != e) {
+			Com_DPrintf ("FIXING ENT->S.NUMBER!!!\n");
+			ent->s.number = e;
+		}
+
+		// entities can be flagged to explicitly not be sent to the client
+		if ( ent->r.svFlags & SVF_NOCLIENT ) {
+			continue;
+		}
+
+		// entities can be flagged to be sent to only one client
+		if ( ent->r.svFlags & SVF_SINGLECLIENT ) {
+			if ( ent->r.singleClient != frame->ps.clientNum ) {
+				continue;
+			}
+		}
+		// entities can be flagged to be sent to everyone but one client
+		if ( ent->r.svFlags & SVF_NOTSINGLECLIENT ) {
+			if ( ent->r.singleClient == frame->ps.clientNum ) {
+				continue;
+			}
+		}
 #ifdef DEDICATED
-        if (!skipDuelCull && DuelCull(SV_GentityNum(frame->ps.clientNum), ent) == 1) {
-            continue;
-        }
+		if (!skipDuelCull && DuelCull(SV_GentityNum(frame->ps.clientNum), ent) == 1) {
+			continue;
+		}
 #endif
-        svEnt = SV_SvEntityForGentity( ent );
+		svEnt = SV_SvEntityForGentity( ent );
 
-        // Don't double add through portals
-        if ( svEnt->snapshotCounter == sv.snapshotCounter ) {
-            continue;
-        }
+		// don't double add an entity through portals
+		if ( svEnt->snapshotCounter == sv.snapshotCounter ) {
+			continue;
+		}
 
-        // --- 512 INTERLACING START ---
-        
-        // 1. High Priority: Always send the player, broadcast entities, and missiles
-        // This ensures combat feels 100% smooth at 40 FPS.
-        if ( e == frame->ps.clientNum || 
-             (ent->r.svFlags & SVF_BROADCAST) || 
-             ent->s.number < MAX_CLIENTS || 
-             ent->s.eType == 2 /* ET_MISSILE */ ) 
-        {
-            SV_AddEntToSnapshot( svEnt, ent, eNums );
-            continue;
-        }
+		// entities can request not to be sent to certain clients (NOTE: always send to ourselves)
+		if ( e != frame->ps.clientNum && (ent->r.svFlags & SVF_BROADCASTCLIENTS)
+			&& !(ent->r.broadcastClients[frame->ps.clientNum/32] & (1 << (frame->ps.clientNum % 32))) )
+		{
+			continue;
+		}
+		// broadcast entities are always sent, and so is the main player so we don't see noclip weirdness
+		if ( (ent->r.svFlags & SVF_BROADCAST) || e == frame->ps.clientNum
+			|| (ent->r.broadcastClients[frame->ps.clientNum/32] & (1 << (frame->ps.clientNum % 32))) )
+		{
+			SV_AddEntToSnapshot( svEnt, ent, eNums );
+			continue;
+		}
 
-        // 2. Low Priority: Check visibility for world items/props
-        if ( !CM_AreasConnected( clientarea, svEnt->areanum ) && !CM_AreasConnected( clientarea, svEnt->areanum2 ) ) {
-            continue;
-        }
+		if (ent->s.isPortalEnt)
+		{ //rww - portal entities are always sent as well
+			SV_AddEntToSnapshot( svEnt, ent, eNums );
+			continue;
+		}
 
-        bitvector = clientpvs;
-        if ( !svEnt->numClusters ) continue;
-        for ( i=0 ; i < svEnt->numClusters ; i++ ) {
-            l = svEnt->clusternums[i];
-            if ( bitvector[l >> 3] & (1 << (l&7) ) ) break;
-        }
-        if ( i == svEnt->numClusters ) {
-            if ( svEnt->lastCluster ) {
-                for ( ; l <= svEnt->lastCluster ; l++ ) {
-                    if ( bitvector[l >> 3] & (1 << (l&7) ) ) break;
-                }
-                if ( l == svEnt->lastCluster ) continue;
-            } else { continue; }
-        }
+		// ignore if not touching a PV leaf
+		// check area
+		if ( !CM_AreasConnected( clientarea, svEnt->areanum ) ) {
+			// doors can legally straddle two areas, so
+			// we may need to check another one
+			if ( !CM_AreasConnected( clientarea, svEnt->areanum2 ) ) {
+				continue;		// blocked by a door
+			}
+		}
 
-        // 3. Distance Cull for low priority (Optimization)
-        if (g_svCullDist != -1.0f) {
-            VectorAdd(ent->r.absmax, ent->r.absmin, difference);
-            VectorScale(difference, 0.5f, difference);
-            VectorSubtract(origin, difference, difference);
-            length = VectorLength(difference);
-            VectorSubtract(ent->r.absmax, ent->r.absmin, difference);
-            radius = VectorLength(difference);
-            if (length-radius >= g_svCullDist) continue;
-        }
+		bitvector = clientpvs;
 
-        // add it
+		// check individual leafs
+		if ( !svEnt->numClusters ) {
+			continue;
+		}
+		l = 0;
+		for ( i=0 ; i < svEnt->numClusters ; i++ ) {
+			l = svEnt->clusternums[i];
+			if ( bitvector[l >> 3] & (1 << (l&7) ) ) {
+				break;
+			}
+		}
+
+		// if we haven't found it to be visible,
+		// check overflow clusters that coudln't be stored
+		if ( i == svEnt->numClusters ) {
+			if ( svEnt->lastCluster ) {
+				for ( ; l <= svEnt->lastCluster ; l++ ) {
+					if ( bitvector[l >> 3] & (1 << (l&7) ) ) {
+						break;
+					}
+				}
+				if ( l == svEnt->lastCluster ) {
+					continue;	// not visible
+				}
+			} else {
+				continue;
+			}
+		}
+
+		if (g_svCullDist != -1.0f)
+		{ //do a distance cull check
+			VectorAdd(ent->r.absmax, ent->r.absmin, difference);
+			VectorScale(difference, 0.5f, difference);
+			VectorSubtract(origin, difference, difference);
+			length = VectorLength(difference);
+
+			// calculate the diameter
+			VectorSubtract(ent->r.absmax, ent->r.absmin, difference);
+			radius = VectorLength(difference);
+			if (length-radius >= g_svCullDist)
+			{ //then don't add it
+				continue;
+			}
+		}
+
+		// add it
 		SV_AddEntToSnapshot( svEnt, ent, eNums );
 
-        // Handle Portals
-        if ( ent->r.svFlags & SVF_PORTAL ) {
-            if ( ent->s.generic1 ) {
-                vec3_t dir;
-                VectorSubtract(ent->s.origin, origin, dir);
-                if ( VectorLengthSquared(dir) > (float) ent->s.generic1 * ent->s.generic1 ) continue;
-            }
+		// if its a portal entity, add everything visible from its camera position
+		if ( ent->r.svFlags & SVF_PORTAL ) {
+			if ( ent->s.generic1 ) {
+				vec3_t dir;
+				VectorSubtract(ent->s.origin, origin, dir);
+				if ( VectorLengthSquared(dir) > (float) ent->s.generic1 * ent->s.generic1 ) {
+					continue;
+				}
+			}
 #ifndef DEDICATED
-            SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue );
+			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue );
 #else
-            SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue, skipDuelCull);
+			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue, skipDuelCull);
 #endif
-        }
-    }
+		}
+	}
 }
 
 /*
