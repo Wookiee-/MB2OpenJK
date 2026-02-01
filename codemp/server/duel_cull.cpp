@@ -13,20 +13,6 @@ static qboolean isPlayer(sharedEntity_t *ent) {
 	return qfalse;
 }
 
-static qboolean isNPC(sharedEntity_t *ent) {
-	if (ent->s.eType == ET_NPC)
-		return qtrue;
-
-	return qfalse;
-}
-
-static qboolean isMover(sharedEntity_t *ent) {
-	if (ent->s.eType == ET_MOVER)
-		return qtrue;
-
-	return qfalse;
-}
-
 sharedEntity_t *flatten(sharedEntity_t *ent) {
     if (ent->s.eType == ET_MISSILE) {
         return SV_GentityNum(ent->r.ownerNum);
@@ -49,30 +35,6 @@ sharedEntity_t *flatten(sharedEntity_t *ent) {
 
 static playerState_t *GetPS(sharedEntity_t *ent) {
 	return SV_GameClientNum(ent->s.number);
-}
-
-static qboolean isDueling(sharedEntity_t *ent) {
-	if (isPlayer(flatten(ent)) && GetPS(flatten(ent))->duelInProgress)
-		return qtrue;
-
-	return qfalse;
-}
-
-static qboolean isActor(sharedEntity_t *ent) {
-	if (!isMover(ent) && (isPlayer(flatten(ent)) || isNPC(flatten(ent))))
-		return qtrue;
-
-	return qfalse;
-}
-
-static qboolean isDuelOpponent(sharedEntity_t *A, sharedEntity_t *B) { //wtf void??
-	auto a = flatten(A);
-	auto b = flatten(B);
-
-	if (isDueling(a) && isDueling(b) && (a == b || a->playerState->duelIndex == SV_NumForGentity(b)))
-		return qtrue;
-
-	return qfalse;
 }
 
 // Helper to extract clean names
@@ -115,43 +77,44 @@ static void GetPlayerName(int clientNum, char *outName, int maxSize) {
 int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
     int entNum = ent->s.number;
 
-    // --- 1. LOGGING MODIFICATIONS ---
+    // --- 1. LOGGING MODIFICATIONS (State-Locked) ---
     if (entNum >= 0 && entNum < MAX_CLIENTS && isPlayer(ent)) {
         playerState_t *ps = GetPS(ent);
         qboolean isCurrentlyDueling = (ps && ps->duelInProgress) ? qtrue : qfalse;
 
         // START TRIGGER: Log when the duel begins
         if (isCurrentlyDueling && !oldDuelState[entNum]) {
-            int myOpponent = ps->duelIndex; 
+            int myOpponentIdx = ps->duelIndex; 
 
-            // 1. IS THE OPPONENT VALID? (Not me, and a real client ID)
-            if (myOpponent >= 0 && myOpponent < MAX_CLIENTS && myOpponent != entNum) {
-                
-                // 2. SELF-VERIFICATION: 
-                // Only the player with the lower ID number prints the log.
-                // This ensures that if you (the Spectator) are being processed, 
-                // you don't 'hijack' the log for the two people actually fighting.
-                if (entNum < myOpponent) {
-                    char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
-                    GetPlayerName(entNum, p1Name, sizeof(p1Name));
-                    GetPlayerName(myOpponent, p2Name, sizeof(p2Name));
+            if (myOpponentIdx >= 0 && myOpponentIdx < MAX_CLIENTS && myOpponentIdx != entNum) {
+                // THE HANDSHAKE: Get the player state of the opponent
+                sharedEntity_t *oppEnt = SV_GentityNum(myOpponentIdx);
+                playerState_t *oppPs = GetPS(oppEnt);
 
-                    GVM_LogPrintf("DuelStart: %s challenged %s to a private duel\n", p1Name, p2Name);
+                // RECIPROCITY CHECK: Ensure both are locked to each other
+                if (oppPs && oppPs->duelInProgress && oppPs->duelIndex == entNum) {
+                    // LOCK: This prevents any more "Start" logs until the duel ends
+                    oldDuelState[entNum] = qtrue;
+                    duelOpponent[entNum] = myOpponentIdx;
+
+                    // ID FILTER: Only one side prints to avoid double-logging the pair
+                    if (entNum < myOpponentIdx) {
+                        char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
+                        GetPlayerName(entNum, p1Name, sizeof(p1Name));
+                        GetPlayerName(myOpponentIdx, p2Name, sizeof(p2Name));
+                        GVM_LogPrintf("DuelStart: %s challenged %s to a private duel\n", p1Name, p2Name);
+                    }
                 }
-                
-                duelOpponent[entNum] = myOpponent;
-                oldDuelState[entNum] = qtrue;
             }
         }
-
-        // END TRIGGER: Log the outcome when the duel ends
+        // END TRIGGER: Log when the duel ends
         else if (!isCurrentlyDueling && oldDuelState[entNum]) {
-            // 3. WINNER CHECK:
-            // Only the person with Health > 1 (the winner) reports the kill.
-            // Spectators have no health/stats in this context, so they will skip this.
+            // MB2 Loser is set to 1 HP. Winner is > 1.
             if (ps && ps->stats[STAT_HEALTH] > 1) {
                 int loserIdx = duelOpponent[entNum];
                 
+                // We use the ID we "Locked" at the start, because the engine
+                // has likely already cleared ps->duelIndex by this frame.
                 if (loserIdx >= 0 && loserIdx < MAX_CLIENTS) {
                     char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
                     GetPlayerName(entNum, winnerName, sizeof(winnerName));
@@ -161,13 +124,13 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
                 }
             }
 
-            // Cleanup trackers for the current entity
+            // UNLOCK: Reset trackers so they can duel again
             oldDuelState[entNum] = qfalse;
-            duelOpponent[entNum] = 0;
+            duelOpponent[entNum] = -1; // Use -1 to avoid accidental Player 0 triggers
         }
     }
-    
-    // --- 2. ORIGINAL CULLING LOGIC ---
+
+    // --- 2. CULLING LOGIC (Smooth Visible Ghosting) ---
     if (!sv_snapShotDuelCull->integer)
         return 0;
 
@@ -175,34 +138,22 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
         return 0; 
     }
 
-    auto culledTouch = flatten(touch);
+    playerState_t *ps = GetPS(ent);
+    int touchNum = touch->s.number;
 
-    if (!isActor(ent)) {
-        return 0;
-    }
-
-    if (isDueling(ent)) {
-        if (isDuelOpponent(ent, culledTouch)) {
-            return 0; 
-        }
-        if (isActor(culledTouch)) {
-            return 1; 
-        }
-        if (touch->r.ownerNum != ENTITYNUM_NONE) {
-            sharedEntity_t *owner = SV_GentityNum(touch->r.ownerNum);
-            if (isActor(owner) && !isDuelOpponent(ent, owner)) {
-                return 1;
-            }
-        }
-        return 0;
-    }
-
-    if (isActor(culledTouch)) {
-        if (isDueling(culledTouch)) {
-            return 2; 
+    // IF I AM DUELING: Ghost everyone except my opponent
+    if (ps && ps->duelInProgress) {
+        if (ps->duelIndex != touchNum) {
+            return 2; // RETURN 2: Visible, but no hard collision
         }
         return 0; 
     }
 
+    // IF I AM A BYSTANDER: Ghost the duelists
+    playerState_t *ops = GetPS(touch);
+    if (ops && ops->duelInProgress) {
+        return 2; // Visible Ghost
+    }
+
     return 0;
-}
+}    
