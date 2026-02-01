@@ -122,36 +122,38 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
 
         // START TRIGGER: Log when the duel begins
         if (isCurrentlyDueling && !oldDuelState[entNum]) {
-            // Validate the opponent exists and is actually the person we are dueling
-            int targetIdx = ps->duelIndex;
-            if (targetIdx >= 0 && targetIdx < MAX_CLIENTS && targetIdx != entNum) {
+            int myOpponent = ps->duelIndex; 
+
+            // 1. IS THE OPPONENT VALID? (Not me, and a real client ID)
+            if (myOpponent >= 0 && myOpponent < MAX_CLIENTS && myOpponent != entNum) {
                 
-                // CRITICAL FILTER: Only print if this player's ID is lower than the target
-                // This prevents a 3rd party or the opponent from double-printing
-                if (entNum < targetIdx) {
+                // 2. SELF-VERIFICATION: 
+                // Only the player with the lower ID number prints the log.
+                // This ensures that if you (the Spectator) are being processed, 
+                // you don't 'hijack' the log for the two people actually fighting.
+                if (entNum < myOpponent) {
                     char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
                     GetPlayerName(entNum, p1Name, sizeof(p1Name));
-                    GetPlayerName(targetIdx, p2Name, sizeof(p2Name));
+                    GetPlayerName(myOpponent, p2Name, sizeof(p2Name));
 
                     GVM_LogPrintf("DuelStart: %s challenged %s to a private duel\n", p1Name, p2Name);
                 }
                 
-                duelOpponent[entNum] = targetIdx;
+                duelOpponent[entNum] = myOpponent;
                 oldDuelState[entNum] = qtrue;
             }
         }
 
         // END TRIGGER: Log the outcome when the duel ends
         else if (!isCurrentlyDueling && oldDuelState[entNum]) {
-            // Only the winner prints the log. 
-            // We check health > 1 because MB2 sets the loser to exactly 1 HP.
+            // 3. WINNER CHECK:
+            // Only the person with Health > 1 (the winner) reports the kill.
+            // Spectators have no health/stats in this context, so they will skip this.
             if (ps && ps->stats[STAT_HEALTH] > 1) {
                 int loserIdx = duelOpponent[entNum];
                 
-                // Double-check the opponent index still makes sense
                 if (loserIdx >= 0 && loserIdx < MAX_CLIENTS) {
                     char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
-                    
                     GetPlayerName(entNum, winnerName, sizeof(winnerName));
                     GetPlayerName(loserIdx, loserName, sizeof(loserName));
 
@@ -159,7 +161,7 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
                 }
             }
 
-            // Always reset for both players
+            // Cleanup trackers for the current entity
             oldDuelState[entNum] = qfalse;
             duelOpponent[entNum] = 0;
         }
