@@ -1,3 +1,38 @@
+# High-Latency Server Engine Optimizations
+
+This repository contains a specialized build of the OpenJK/Jedi Academy server engine. These modifications architecturally improve network stability, input responsiveness, and competitive integrity for players with latencies up to 200ms+.
+
+---
+
+## 1. Network Snapshot Delivery (sv_snapshot.cpp)
+The server-to-client communication has been redesigned to favor data continuity over strict rate-limiting, effectively eliminating "freeze" states.
+
+* **Aggressive Delta Recovery:** The engine now searches much further back into the snapshot history to find a valid frame for delta compression. This prevents the server from defaulting to "Full Gamestate" sends, which are the primary cause of the "999 Connection Interrupted" freeze on unstable connections.
+* **Adaptive Rate Management:** Traditional throttling that stops snapshot transmission during packet loss has been disabled. The server maintains a constant data flow, ensuring that even if a packet is delayed, the subsequent data is sent immediately to keep the client’s game world moving.
+* **Overflow Mitigation:** Added robust handling for message overflows. When a packet exceeds the network limit, the server prioritizes movement and combat state while reducing non-essential data, preventing a hard disconnect.
+
+## 2. Command Processing & Jitter Correction (sv_client.cpp)
+The way the server interprets player intent has been modified to eliminate the "input lag" often felt on high-ping connections.
+
+* **Universal Jitter Clamping:** The server no longer discards or queues packets that arrive slightly ahead of its internal clock due to network jitter. Instead, it intelligently "clamps" these commands to the current server time.
+* **Instant Action Execution:** By processing commands the millisecond they arrive rather than waiting for a specific timestamp match, hit registration for sabers and button presses (swings, jumps, force powers) feels instantaneous.
+* **Packet-Burst Protection:** A dynamic safety window, scaled to the server's frame rate, prevents "command clumping." This ensures that if multiple packets arrive at once, the player does not "warp" across the map, maintaining linear and predictable movement for opponents.
+
+## 3. Duel Integrity & Collision Management (duel_cull.cpp)
+Competitive integrity is maintained by isolating duels from the surrounding chaos of a public server while fixing long-standing engine bugs regarding collision.
+
+* **Bystander Ghosting:** A sophisticated culling system ensures that players in a private duel can pass through non-dueling players. This prevents "body blocking" and interference from spectators without affecting the duelists' ability to collide with each other.
+* **NPC Logic Preservation:** Specific safeguards have been added for NPCs and dummies. This prevents dueling bots or test dummies from losing their collision properties, ensuring they remain solid targets for practice even when targeted by a duelist.
+* **State Tracking & Performance:** Improved tracking for duel participants ensures that collision states are reset instantly upon duel completion. All duel outcomes are logged with clean naming conventions for server administration and analytics.
+
+---
+
+## Summary of Benefits
+* **Zero "999" Freezes:** High-latency players no longer time out during minor packet loss.
+* **Responsive Sabers:** Saber swings and blocks register when they hit the server, not when the clock catches up.
+* **Linear Movement:** Opponents move smoothly even if they are lagging, making them easier to track.
+* **Clean Duels:** Private duels are protected from external interference while maintaining perfect collision.
+
 # OpenJK
 
 OpenJK is an effort by the JACoders group to maintain and improve the game engines on which the Jedi Academy (JA) and Jedi Outcast (JO) games run on, while maintaining *full backwards compatibility* with the existing games. *This project does not attempt to rebalance or otherwise modify core gameplay*.
