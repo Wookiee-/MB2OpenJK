@@ -130,30 +130,40 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
         }
     }
 
-    // --- 2. CULLING LOGIC (Smooth Visible Ghosting) ---
+    // --- 2. CULLING LOGIC (With NPC Fix) ---
     if (!sv_snapShotDuelCull->integer)
         return 0;
 
+    // 1. If it's not a person or NPC, treat as solid
     if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
+        return 0; 
+    }
+
+    // 2. SAFETY: If the thing we are touching is an NPC, ALWAYS stay solid.
+    // This stops dummies from turning into ghosts when they are "dueling".
+    if (touch->s.eType == ET_NPC) {
         return 0; 
     }
 
     playerState_t *ps = GetPS(ent);
     int touchNum = touch->s.number;
 
-    // IF I AM DUELING: Ghost everyone except my opponent
+    // 3. IF I AM DUELING: Ghost other players (bystanders)
     if (ps && ps->duelInProgress) {
         if (ps->duelIndex != touchNum) {
-            return 2; // RETURN 2: Visible, but no hard collision
+            return 2; 
         }
         return 0; 
     }
 
-    // IF I AM A BYSTANDER: Ghost the duelists
-    playerState_t *ops = GetPS(touch);
-    if (ops && ops->duelInProgress) {
-        return 2; // Visible Ghost
+    // 4. IF I AM A BYSTANDER: Ghost players who are dueling
+    // We only check for ET_PLAYER here so we don't ghost NPCs accidentally
+    if (touch->s.eType == ET_PLAYER) {
+        playerState_t *ops = GetPS(touch);
+        if (ops && ops->duelInProgress) {
+            return 2; 
+        }
     }
 
     return 0;
-}    
+}   
