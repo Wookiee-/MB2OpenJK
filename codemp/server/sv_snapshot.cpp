@@ -137,38 +137,45 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 		client->deltaMessage = client->netchan.outgoingSequence;
 	}
 
-	// try to use a previous frame as the source for delta compressing the snapshot
+// try to use a previous frame as the source for delta compressing the snapshot
 	if ( deltaMessage <= 0 || client->state != CS_ACTIVE ) {
 		// client is asking for a retransmit
 		oldframe = NULL;
 		lastframe = 0;
-	} else if ( client->netchan.outgoingSequence - deltaMessage
-		>= (PACKET_BACKUP - 1) ) {
-		// client hasn't gotten a good message through in a long time
-		Com_DPrintf ("%s: Delta request from out of date packet.\n", client->name);
-		oldframe = NULL;
-		lastframe = 0;
 	} else if ( client->demo.demorecording && client->demo.demowaiting ) {
-		// demo is waiting for a non-delta-compressed frame for this client, so don't delta compress
+		// demo is waiting for a non-delta-compressed frame for this client
 		oldframe = NULL;
 		lastframe = 0;
 	} else if ( client->demo.minDeltaFrame > deltaMessage ) {
-		// we saved a non-delta frame to the demo and sent it to the client, but the client didn't ack it
-		// we can't delta against an old frame that's not in the demo without breaking the demo.  so send
-		// non-delta frames until the client acks.
 		oldframe = NULL;
 		lastframe = 0;
 	} else {
-		// we have a valid snapshot to delta from
-		oldframe = &client->frames[ deltaMessage & PACKET_MASK ];
-		lastframe = client->netchan.outgoingSequence - deltaMessage;
-
-		// the snapshot's entities may still have rolled off the buffer, though
-		if ( oldframe->first_entity <= svs.nextSnapshotEntities - svs.numSnapshotEntities ) {
-			Com_DPrintf ("%s: Delta request from out of date entities.\n", client->name);
+		// --- START DEEP DELTA SEARCH ---
+		// Instead of relying on just one deltaMessage, we scan the backup buffer
+		// to find the most recent frame that the client has actually acknowledged.
+		oldframe = NULL;
+		for ( i = 1 ; i < PACKET_BACKUP ; i++ ) {
+			oldframe = &client->frames[ ( client->netchan.outgoingSequence - i ) & PACKET_MASK ];
+			
+			// If this frame was acknowledged and is older or equal to the client's delta request
+			if ( oldframe->messageAcked > 0 && oldframe->messageAcked <= deltaMessage ) {
+				lastframe = i;
+				
+				// Safety: Ensure the entities for this frame haven't rolled off the circular buffer
+				if ( oldframe->first_entity <= svs.nextSnapshotEntities - svs.numSnapshotEntities ) {
+					oldframe = NULL;
+					continue; 
+				}
+				break; // Success: Found a valid frame to delta against
+			}
 			oldframe = NULL;
+		}
+
+		if ( !oldframe ) {
+			// Fallback: send a full snapshot if no acknowledged frame is found in history
 			lastframe = 0;
 		}
+		// --- END DEEP DELTA SEARCH ---
 	}
 
 	if ( oldframe == NULL ) {
