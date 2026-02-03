@@ -1472,33 +1472,24 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 		return;
 	}
 
-	// This allows for natural network jitter without letting commands 'clump' too much.
-   int frameTime = (1000 / sv_fps->integer);
-   int maxSafeFuture = sv.time + (frameTime * 2);
-
-   for ( i =  0 ; i < cmdCount ; i++ ) {
-      // 1. If this is a cmd from before a map_restart ignore it
-      if ( cmds[i].serverTime > cmds[cmdCount-1].serverTime ) {
-         continue;
-      }
-
-      // 2. Universal Jitter Correction:
-      // If command is way too far ahead (lag spike/speedhack), skip it.
-      if ( cmds[i].serverTime > maxSafeFuture ) {
-         continue;
-      } 
-      // If it's only slightly ahead (jitter), clamp it to 'now'.
-      // This ensures actions like swings and jumps happen instantly.
-      else if ( cmds[i].serverTime > sv.time ) {
-         cmds[i].serverTime = sv.time;
-      }
-
-      // 3. Don't execute if this is an old cmd which is already executed
-      if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
-         continue;
-      }
-
-        SV_ClientThink (cl, &cmds[i]);
+	// usually, the first couple commands will be duplicates
+	// of ones we have previously received, but the servertimes
+	// in the commands will cause them to be immediately discarded
+	for ( i =  0 ; i < cmdCount ; i++ ) {
+		// if this is a cmd from before a map_restart ignore it
+		if ( cmds[i].serverTime > cmds[cmdCount-1].serverTime ) {
+			continue;
+		}
+		// extremely lagged or cmd from before a map_restart
+		//if ( cmds[i].serverTime > svs.time + 3000 ) {
+		//	continue;
+		//}
+		// don't execute if this is an old cmd which is already executed
+		// these old cmds are included when cl_packetdup > 0
+		if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
+			continue;
+		}
+		SV_ClientThink (cl, &cmds[ i ]);
     }
 }
 
