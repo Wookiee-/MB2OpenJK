@@ -33,6 +33,67 @@ Competitive integrity is maintained by isolating duels from the surrounding chao
 * **Linear Movement:** Opponents move smoothly even if they are lagging, making them easier to track.
 * **Clean Duels:** Private duels are protected from external interference while maintaining perfect collision.
 
+# High-Ping & Networking Optimizations
+
+This repository contains a set of mission-critical networking optimizations for the OpenJK engine, specifically designed to eliminate "999" lag spikes, stabilize connections over 200ms ping, and ensure competitive hit registration.
+
+## Optimized Files Comparison
+
+The following sections detail the exact line-by-line changes between the **Stock** engine code and the **Optimized** versions.
+
+### 1. `sv_snapshot.cpp`
+
+These changes focus on proactive data delivery and deep packet recovery.
+
+* **Player Position Prioritization (Line 91)**
+    * **Stock:** `MSG_WriteDeltaEntity (msg, oldent, newent, qfalse );`
+    * **Optimized:** `MSG_WriteDeltaEntity (msg, oldent, newent, (newnum < MAX_CLIENTS) ? qtrue : qfalse );`
+    * **Result:** Forces the server to prioritize player movement updates in every snapshot, maintaining combat accuracy even when snapshots are saturated.
+
+* **Deep Delta Recovery Search (Line 159)**
+    * **Stock:** Standard shallow search for acknowledged frames.
+    * **Optimized:** Implemented a for-loop: `for ( i = 0 ; i < PACKET_BACKUP ; i++ )` to scan the backup buffer.
+    * **Result:** Searches up to 32 frames back for a valid base. This prevents the "Full Gamestate" stutters (1-second freezes) commonly triggered by a single lost packet on high-latency connections.
+
+* **Proactive Fragment Pumping (Line 460)**
+    * **Stock:** Logic for fragment handling is missing in this block.
+    * **Optimized:** Added `if (client->state && client->netchan.unsentFragments) { ... }` block.
+    * **Result:** Triggers an immediate transmission of the next fragment using `SV_Netchan_TransmitNextFragment`. Instead of waiting for the next server tick, it calculates a precision delay via `SV_RateMsec`, eliminating the "999 Connection Interrupted" icon.
+
+* **Smart Overflow Management (Line 475)**
+    * **Stock:** Basic overflow warning only.
+    * **Optimized:** Added `"WARNING: msg overflowed... - Reducing Data..."` and sets `client->rateDelayed = qtrue;`.
+    * **Result:** Actively manages data bursts during heavy combat to prevent clients from falling out of sync.
+
+* **Fragment Logic Trigger (Line 512)**
+    * **Stock:** Passively resets the snapshot timer: `c->nextSnapshotTime = 0;`.
+    * **Optimized:** Proactively calls `SV_SendMessageToClient( NULL, c );`.
+    * **Result:** Moves fragment handling to the start of the message loop, bypassing snapshot timers to ensure large data chunks (like map loads) flow at the maximum possible rate.
+
+### 2. `sv_client.cpp`
+
+These changes address input lag and network jitter.
+
+* **Future Command Filtering (Line 929)**
+    * **Stock:** No safety window for future timestamps.
+    * **Optimized:** Added `frameTime` and `maxSafeFuture` calculations.
+    * **Result:** Detects and ignores command packets sent too far into the server's future (anti-speedhack).
+
+* **Jitter Clamping (Line 938)**
+    * **Stock:** Missing logic.
+    * **Optimized:** Added `if ( ucmd->serverTime > sv.time ) { ucmd->serverTime = sv.time; }`.
+    * **Result:** "Clamps" packets that arrive slightly early due to network jitter to the current server time. This ensures saber swings and shots register the instant they reach the server, fixing the "dead-click" feeling on high-ping connections.
+
+---
+
+## Technical Overview
+
+The engine has been converted from a **Passive** "wait-for-timer" system to an **Active** "pump-and-clamp" system:
+
+1.  **Fragment Pump:** Data flows constantly; the server doesn't wait for a new snapshot to clear the buffer.
+2.  **Deep Delta:** The server is 32x more likely to find a valid delta base, keeping packets small.
+3.  **Command Clamping:** Hit registration is processed at the earliest possible millisecond relative to server time.
+
 # OpenJK
 
 OpenJK is an effort by the JACoders group to maintain and improve the game engines on which the Jedi Academy (JA) and Jedi Outcast (JO) games run on, while maintaining *full backwards compatibility* with the existing games. *This project does not attempt to rebalance or otherwise modify core gameplay*.

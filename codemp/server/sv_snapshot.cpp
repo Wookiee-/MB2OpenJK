@@ -910,17 +910,17 @@ void SV_SendClientMessages( void ) {
 			continue;		// not connected
 		}
 
+		// --- HIGH PING OPTIMIZATION ---
+        // If we have fragments waiting, we MUST try to send them now.
+        // We do this BEFORE the time check so fragments aren't delayed by the snapshot timer.
+        if ( c->netchan.unsentFragments ) {
+            // Calling this ensures the fragment logic in your SV_SendMessageToClient triggers
+            SV_SendMessageToClient( NULL, c ); 
+            continue;
+        }
+
 		if ( svs.time < c->nextSnapshotTime ) {
 			continue;		// not time yet
-		}
-
-		// send additional message fragments if the last message
-		// was too large to send at once
-		if ( c->netchan.unsentFragments ) {
-		    c->nextSnapshotTime = svs.time +
-		        SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
-		    SV_Netchan_TransmitNextFragment( &c->netchan );
-		    continue;
 		}
 
 		// generate and send a new message
