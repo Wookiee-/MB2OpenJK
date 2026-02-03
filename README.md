@@ -45,11 +45,6 @@ The following sections detail the exact line-by-line changes between the **Stock
 
 These changes focus on proactive data delivery and deep packet recovery.
 
-* **Player Position Prioritization (Line 91)**
-    * **Stock:** `MSG_WriteDeltaEntity (msg, oldent, newent, qfalse );`
-    * **Optimized:** `MSG_WriteDeltaEntity (msg, oldent, newent, (newnum < MAX_CLIENTS) ? qtrue : qfalse );`
-    * **Result:** Forces the server to prioritize player movement updates in every snapshot, maintaining combat accuracy even when snapshots are saturated.
-
 * **Deep Delta Recovery Search (Line 159)**
     * **Stock:** Standard shallow search for acknowledged frames.
     * **Optimized:** Implemented a for-loop: `for ( i = 0 ; i < PACKET_BACKUP ; i++ )` to scan the backup buffer.

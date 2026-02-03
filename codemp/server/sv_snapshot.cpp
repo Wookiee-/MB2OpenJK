@@ -89,7 +89,7 @@ static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to,
 			// delta update from old position
 			// because the force parm is qfalse, this will not result
 			// in any bytes being emited if the entity has not changed at all
-			MSG_WriteDeltaEntity (msg, oldent, newent, (newnum < MAX_CLIENTS) ? qtrue : qfalse );
+			MSG_WriteDeltaEntity (msg, oldent, newent, qfalse );
 			oldindex++;
 			newindex++;
 			continue;
@@ -148,7 +148,6 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 		Com_DPrintf ("%s: Delta request from out of date packet.\n", client->name);
 		oldframe = NULL;
 		lastframe = 0;
-		client->rateDelayed = qfalse;
 	} else if ( client->demo.demorecording && client->demo.demowaiting ) {
 		// demo is waiting for a non-delta-compressed frame for this client, so don't delta compress
 		oldframe = NULL;
@@ -209,12 +208,11 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	if ( !oldframe ) {
     if (client->netchan.unsentFragments) {
         client->rateDelayed = qtrue;
-    }
-}
+	    }
+	}
 
 	if ( client->rateDelayed ) {
 		snapFlags |= SNAPFLAG_RATE_DELAYED;
-		frame->ps.m_iVehicleNum = 0; 
 	}
 	if ( client->state != CS_ACTIVE ) {
 		snapFlags |= SNAPFLAG_NOT_ACTIVE;
