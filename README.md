@@ -1,93 +1,46 @@
-# High-Latency Server Engine Optimizations
+### 1. `sv_snapshot.cpp` Comprehensive Optimizations
 
-This repository contains a specialized build of the OpenJK/Jedi Academy server engine. These modifications architecturally improve network stability, input responsiveness, and competitive integrity for players with latencies up to 200ms+.
+These changes stabilize high-latency connections (200ms+) by implementing deeper delta searches, proactive fragment management, and smarter overflow recovery.
 
----
+* **Deep Delta Recovery Search (Function: `SV_WriteSnapshotToClient`, Line 144)**
+    * **Stock:** Uses a rigid check that triggers a "Full Snapshot" if the client hasn't acknowledged a packet in ~800ms.
+    * **Optimized:** Implements a search loop `for ( i = 1 ; i < PACKET_BACKUP ; i++ )` that scans the backup buffer for any valid acknowledged frame.
+    * **Result:** Allows the server to find a valid delta base up to 32 frames back, preventing the massive "Full Gamestate" stutters (1-second freezes) common on high-ping connections.
 
-## 1. Network Snapshot Delivery (sv_snapshot.cpp)
-The server-to-client communication has been redesigned to favor data continuity over strict rate-limiting, effectively eliminating "freeze" states.
+* **Reliable Command Throttling (Function: `SV_UpdateServerCommandsToClient`, Line 240)**
+    * **Stock:** Blindly writes all unacknowledged reliable commands until the buffer overflows.
+    * **Optimized:** Added a safety check: `if ( msg->cursize > (MAX_MSGLEN - 2048) )`.
+    * **Result:** It stops writing reliable commands if the packet is nearing the 16KB limit, preventing a hard overflow and ensuring the essential snapshot data can still fit.
 
-* **Aggressive Delta Recovery:** The engine now searches much further back into the snapshot history to find a valid frame for delta compression. This prevents the server from defaulting to "Full Gamestate" sends, which are the primary cause of the "999 Connection Interrupted" freeze on unstable connections.
-* **Adaptive Rate Management:** Traditional throttling that stops snapshot transmission during packet loss has been disabled. The server maintains a constant data flow, ensuring that even if a packet is delayed, the subsequent data is sent immediately to keep the client’s game world moving.
-* **Overflow Mitigation:** Added robust handling for message overflows. When a packet exceeds the network limit, the server prioritizes movement and combat state while reducing non-essential data, preventing a hard disconnect.
+* **Smart Overflow Management & Recovery (Function: `SV_SendClientSnapshot`, Line 661)**
+    * **Stock:** Simply prints a warning and clears the message, leading to dropped frames or "Connection Interrupted" stutters.
+    * **Optimized:** If a message overflows, the server clears the buffer, sets `client->rateDelayed = qtrue`, and immediately re-attempts a "stripped down" snapshot.
+    * **Result:** Actively manages data bursts during heavy combat to keep the client in sync instead of failing the transmission.
 
-## 2. Command Processing & Jitter Correction (sv_client.cpp)
-The way the server interprets player intent has been modified to eliminate the "input lag" often felt on high-ping connections.
+* **Proactive Fragment Pumping (Function: `SV_SendClientMessages`, Line 707)**
+    * **Stock:** Pending fragments must wait for the `nextSnapshotTime` timer to expire before they are sent.
+    * **Optimized:** Moved the fragment check to the top of the loop: `if ( c->netchan.unsentFragments ) { SV_SendMessageToClient( NULL, c ); continue; }`.
+    * **Result:** Prioritizes pending fragments, pushing them out as fast as the client's rate allows. This significantly reduces the "999" lag icon by bypassing snapshot timing gates.
 
-* **Universal Jitter Clamping:** The server no longer discards or queues packets that arrive slightly ahead of its internal clock due to network jitter. Instead, it intelligently "clamps" these commands to the current server time.
-* **Instant Action Execution:** By processing commands the millisecond they arrive rather than waiting for a specific timestamp match, hit registration for sabers and button presses (swings, jumps, force powers) feels instantaneous.
-* **Packet-Burst Protection:** A dynamic safety window, scaled to the server's frame rate, prevents "command clumping." This ensures that if multiple packets arrive at once, the player does not "warp" across the map, maintaining linear and predictable movement for opponents.
+* **Precision Rate-Delay Calculation (Function: `SV_RateMsec`, Line 576)**
+    * **Stock:** Clamps message size to a fixed 1500 bytes for rate calculations.
+    * **Optimized:** Clamps to `MAX_MSGLEN` (16384 bytes) to reflect modern snapshot sizes.
+    * **Result:** Provides smoother packet intervals and prevents the server from overwhelming the client's bandwidth setting.
 
-## 3. Duel Integrity & Collision Management (duel_cull.cpp)
-Competitive integrity is maintained by isolating duels from the surrounding chaos of a public server while fixing long-standing engine bugs regarding collision.
+* **Thread-Safe Fragment Handling (Function: `SV_SendMessageToClient`, Line 603)**
+    * **Stock:** Uses a `while` loop that could potentially hang the server thread if fragments are backed up.
+    * **Optimized:** Replaced with an `if` block that sends a single fragment and exits, updating `nextSnapshotTime` based on `SV_RateMsec`.
+    * **Result:** Ensures one lagging player cannot hang the entire server thread while processing fragments.
 
-* **Bystander Ghosting:** A sophisticated culling system ensures that players in a private duel can pass through non-dueling players. This prevents "body blocking" and interference from spectators without affecting the duelists' ability to collide with each other.
-* **NPC Logic Preservation:** Specific safeguards have been added for NPCs and dummies. This prevents dueling bots or test dummies from losing their collision properties, ensuring they remain solid targets for practice even when targeted by a duelist.
-* **State Tracking & Performance:** Improved tracking for duel participants ensures that collision states are reset instantly upon duel completion. All duel outcomes are logged with clean naming conventions for server administration and analytics.
+* **Duel Culling Support (Lines 319, 513, and 553)**
+    * **Stock:** No logic to cull entities based on duel status.
+    * **Optimized:** Integrated `DuelCull` checks into `SV_AddEntitiesVisibleFromPoint` and `SV_BuildClientSnapshot`.
+    * **Result:** Reduces network traffic for players in duels by not sending entity data for players they cannot see or interact with.
 
----
-
-## Summary of Benefits
-* **Zero "999" Freezes:** High-latency players no longer time out during minor packet loss.
-* **Responsive Sabers:** Saber swings and blocks register when they hit the server, not when the clock catches up.
-* **Linear Movement:** Opponents move smoothly even if they are lagging, making them easier to track.
-* **Clean Duels:** Private duels are protected from external interference while maintaining perfect collision.
-
-# High-Ping & Networking Optimizations
-
-This repository contains a set of mission-critical networking optimizations for the OpenJK engine, specifically designed to eliminate "999" lag spikes, stabilize connections over 200ms ping, and ensure competitive hit registration.
-
-## Optimized Files Comparison
-
-The following sections detail the exact line-by-line changes between the **Stock** engine code and the **Optimized** versions.
-
-### 1. `sv_snapshot.cpp`
-
-These changes focus on proactive data delivery and deep packet recovery.
-
-* **Deep Delta Recovery Search (Line 159)**
-    * **Stock:** Standard shallow search for acknowledged frames.
-    * **Optimized:** Implemented a for-loop: `for ( i = 0 ; i < PACKET_BACKUP ; i++ )` to scan the backup buffer.
-    * **Result:** Searches up to 32 frames back for a valid base. This prevents the "Full Gamestate" stutters (1-second freezes) commonly triggered by a single lost packet on high-latency connections.
-
-* **Proactive Fragment Pumping (Line 460)**
-    * **Stock:** Logic for fragment handling is missing in this block.
-    * **Optimized:** Added `if (client->state && client->netchan.unsentFragments) { ... }` block.
-    * **Result:** Triggers an immediate transmission of the next fragment using `SV_Netchan_TransmitNextFragment`. Instead of waiting for the next server tick, it calculates a precision delay via `SV_RateMsec`, eliminating the "999 Connection Interrupted" icon.
-
-* **Smart Overflow Management (Line 475)**
-    * **Stock:** Basic overflow warning only.
-    * **Optimized:** Added `"WARNING: msg overflowed... - Reducing Data..."` and sets `client->rateDelayed = qtrue;`.
-    * **Result:** Actively manages data bursts during heavy combat to prevent clients from falling out of sync.
-
-* **Fragment Logic Trigger (Line 512)**
-    * **Stock:** Passively resets the snapshot timer: `c->nextSnapshotTime = 0;`.
-    * **Optimized:** Proactively calls `SV_SendMessageToClient( NULL, c );`.
-    * **Result:** Moves fragment handling to the start of the message loop, bypassing snapshot timers to ensure large data chunks (like map loads) flow at the maximum possible rate.
-
-### 2. `sv_client.cpp`
-
-These changes address input lag and network jitter.
-
-* **Future Command Filtering (Line 929)**
-    * **Stock:** No safety window for future timestamps.
-    * **Optimized:** Added `frameTime` and `maxSafeFuture` calculations.
-    * **Result:** Detects and ignores command packets sent too far into the server's future (anti-speedhack).
-
-* **Jitter Clamping (Line 938)**
-    * **Stock:** Missing logic.
-    * **Optimized:** Added `if ( ucmd->serverTime > sv.time ) { ucmd->serverTime = sv.time; }`.
-    * **Result:** "Clamps" packets that arrive slightly early due to network jitter to the current server time. This ensures saber swings and shots register the instant they reach the server, fixing the "dead-click" feeling on high-ping connections.
-
----
-
-## Technical Overview
-
-The engine has been converted from a **Passive** "wait-for-timer" system to an **Active** "pump-and-clamp" system:
-
-1.  **Fragment Pump:** Data flows constantly; the server doesn't wait for a new snapshot to clear the buffer.
-2.  **Deep Delta:** The server is 32x more likely to find a valid delta base, keeping packets small.
-3.  **Command Clamping:** Hit registration is processed at the earliest possible millisecond relative to server time.
+* **Dynamic Cull Distance (Line 274)**
+    * **Stock:** Uses a hardcoded or default distance for entity culling.
+    * **Optimized:** Initialized `g_svCullDist = 4096.0f;`.
+    * **Result:** Provides a standard, high-performance base for entity visibility checks.
 
 # OpenJK
 
