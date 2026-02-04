@@ -12,28 +12,14 @@ This document outlines the specific differences between the optimized networking
 
 **Impact:** Prevents "phantom" delta compression attempts when the network is congested, ensuring the client receives clean data without "ping spikes" on the scoreboard.
 
-## 2. Reliable Command Throttling (Anti-Overflow)
-**Function:** `SV_UpdateServerCommandsToClient` (Line 240)
-
-* **Stock:** Blindly writes all pending reliable commands (chat, sounds, triggers) into the message buffer until it overflows.
-* **Optimized:** Adds a `MAX_MSGLEN - 2048` safety buffer.
-* **Code:**
-    ```cpp
-    if ( msg->cursize > (MAX_MSGLEN - 2048) ) { 
-        Com_DPrintf("WARNING: Throttling reliable commands for %s to prevent overflow\n", client->name);
-        break; 
-    }
-    ```
-**Impact:** Eliminates the "Reliable Command Overflow" disconnect bug. The server will now defer extra commands to the next packet instead of kicking the player.
-
-## 3. Dedicated Server "Duel Culling"
+## 2. Dedicated Server "Duel Culling"
 **Function:** `SV_AddEntitiesVisibleFromPoint` (Line 384)
 
 * **Stock:** No specialized entity filtering for private match types.
 * **Optimized:** Implements `DuelCull()` logic on dedicated builds.
 * **Impact:** Actively hides entities for spectators or players in other duels. This significantly reduces the snapshot size and prevents lag in high-population duel servers.
 
-## 4. Non-Blocking Fragment Pacing
+## 3. Non-Blocking Fragment Pacing
 **Functions:** `SV_SendMessageToClient` (Line 598) and `SV_SendClientMessages` (Line 809)
 
 * **Stock:** Uses a `while` loop that forces the server to process all fragments before moving on, which can "hitch" the server thread.
@@ -42,7 +28,7 @@ This document outlines the specific differences between the optimized networking
 
 **Impact:** Prevents one laggy player from causing "micro-stutters" for the rest of the server. Movement remains fluid for all players regardless of individual connection quality.
 
-## 5. Snapshot Overflow Recovery
+## 4. Snapshot Overflow Recovery
 **Function:** `SV_SendClientSnapshot` (Line 762)
 
 * **Stock:** If a message overflows, it prints a warning and clears the message, often resulting in a lost frame.

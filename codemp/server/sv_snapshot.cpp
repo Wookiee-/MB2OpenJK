@@ -288,22 +288,16 @@ SV_UpdateServerCommandsToClient
 */
 void SV_UpdateServerCommandsToClient( client_t *client, msg_t *msg ) {
 	int		i;
-	int		ack;
+	int		reliableAcknowledge;
 
-	// Use bot-specific acknowledge if recording a bot demo
 	if ( client->demo.isBot && client->demo.demorecording ) {
-		ack = client->demo.botReliableAcknowledge;
+		reliableAcknowledge = client->demo.botReliableAcknowledge;
 	} else {
-		ack = client->reliableAcknowledge;
+		reliableAcknowledge = client->reliableAcknowledge;
 	}
 
 	// write any unacknowledged serverCommands
-	for ( i = ack + 1 ; i <= client->reliableSequence ; i++ ) {
-		if ( msg->cursize > (MAX_MSGLEN - 2048) ) { 
-			Com_DPrintf("WARNING: Throttling reliable commands for %s to prevent overflow\n", client->name);
-			break; 
-		}
-
+	for ( i = reliableAcknowledge + 1 ; i <= client->reliableSequence ; i++ ) {
 		MSG_WriteByte( msg, svc_serverCommand );
 		MSG_WriteLong( msg, i );
 		MSG_WriteString( msg, client->reliableCommands[ i & (MAX_RELIABLE_COMMANDS-1) ] );
