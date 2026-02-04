@@ -681,7 +681,7 @@ to take to clear, based on the current rate
 ====================
 */
 #define	HEADER_RATE_BYTES	48		// include our header, IP header, and some overhead
-static int SV_RateMsec( client_t *client, int messageSize ) {
+int SV_RateMsec( client_t *client, int messageSize ) {
 	int		rate;
 	int		rateMsec;
 

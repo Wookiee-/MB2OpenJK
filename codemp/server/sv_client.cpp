@@ -36,6 +36,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server/sv_gameapi.h"
 
 static void SV_CloseDownload( client_t *cl );
+int SV_RateMsec(client_t *client, int messageSize);
 
 /*
 =================
@@ -488,14 +489,12 @@ void SV_SendClientGameState( client_t *client ) {
 
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
-	while(client->state&&client->netchan.unsentFragments)
-	{
-		// send additional message fragments if the last message
-		// was too large to send at once
-
-		Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
-		SV_Netchan_TransmitNextFragment(&client->netchan);
-	}
+   if (client->state && client->netchan.unsentFragments) {
+      SV_Netchan_TransmitNextFragment(&client->netchan);
+      // Calculate when the next fragment can go out based on rate
+      client->nextSnapshotTime = svs.time + SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
+      return; 
+   }
 
 	Com_DPrintf ("SV_SendClientGameState() for %s\n", client->name);
 	Com_DPrintf( "Going from CS_CONNECTED to CS_PRIMED for %s\n", client->name );
