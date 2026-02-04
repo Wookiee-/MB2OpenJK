@@ -137,45 +137,38 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 		client->deltaMessage = client->netchan.outgoingSequence;
 	}
 
-// try to use a previous frame as the source for delta compressing the snapshot
+		// try to use a previous frame as the source for delta compressing the snapshot
 	if ( deltaMessage <= 0 || client->state != CS_ACTIVE ) {
 		// client is asking for a retransmit
 		oldframe = NULL;
 		lastframe = 0;
+	} else if ( client->netchan.outgoingSequence - deltaMessage
+		>= (PACKET_BACKUP - 3) ) {
+		// client hasn't gotten a good message through in a long time
+		Com_DPrintf ("%s: Delta request from out of date packet.\n", client->name);
+		oldframe = NULL;
+		lastframe = 0;
 	} else if ( client->demo.demorecording && client->demo.demowaiting ) {
-		// demo is waiting for a non-delta-compressed frame for this client
+		// demo is waiting for a non-delta-compressed frame for this client, so don't delta compress
 		oldframe = NULL;
 		lastframe = 0;
 	} else if ( client->demo.minDeltaFrame > deltaMessage ) {
+		// we saved a non-delta frame to the demo and sent it to the client, but the client didn't ack it
+		// we can't delta against an old frame that's not in the demo without breaking the demo.  so send
+		// non-delta frames until the client acks.
 		oldframe = NULL;
 		lastframe = 0;
 	} else {
-		// --- START DEEP DELTA SEARCH ---
-		// Instead of relying on just one deltaMessage, we scan the backup buffer
-		// to find the most recent frame that the client has actually acknowledged.
-		oldframe = NULL;
-		for ( i = 1 ; i < PACKET_BACKUP ; i++ ) {
-			oldframe = &client->frames[ ( client->netchan.outgoingSequence - i ) & PACKET_MASK ];
-			
-			// If this frame was acknowledged and is older or equal to the client's delta request
-			if ( oldframe->messageAcked > 0 && oldframe->messageAcked <= deltaMessage ) {
-				lastframe = i;
-				
-				// Safety: Ensure the entities for this frame haven't rolled off the circular buffer
-				if ( oldframe->first_entity <= svs.nextSnapshotEntities - svs.numSnapshotEntities ) {
-					oldframe = NULL;
-					continue; 
-				}
-				break; // Success: Found a valid frame to delta against
-			}
-			oldframe = NULL;
-		}
+		// we have a valid snapshot to delta from
+		oldframe = &client->frames[ deltaMessage & PACKET_MASK ];
+		lastframe = client->netchan.outgoingSequence - deltaMessage;
 
-		if ( !oldframe ) {
-			// Fallback: send a full snapshot if no acknowledged frame is found in history
+		// the snapshot's entities may still have rolled off the buffer, though
+		if ( oldframe->first_entity <= svs.nextSnapshotEntities - svs.numSnapshotEntities ) {
+			Com_DPrintf ("%s: Delta request from out of date entities.\n", client->name);
+			oldframe = NULL;
 			lastframe = 0;
 		}
-		// --- END DEEP DELTA SEARCH ---
 	}
 
 	if ( oldframe == NULL ) {
@@ -213,8 +206,8 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	snapFlags = svs.snapFlagServerBit;
 
 	if ( !oldframe ) {
-    if (client->netchan.unsentFragments) {
-        client->rateDelayed = qtrue;
+	    if (client->netchan.unsentFragments) {
+	        client->rateDelayed = qtrue;
 	    }
 	}
 
@@ -699,9 +692,10 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 	int		rateMsec;
 
 	// individual messages will never be larger than fragment size
-	if ( messageSize > MAX_MSGLEN ) {
-		messageSize = MAX_MSGLEN;
+	if ( messageSize > 1500 ) {
+		messageSize = 1500;
 	}
+	
 	rate = client->rate;
 	if ( sv_maxRate->integer ) {
 		if ( sv_maxRate->integer < 1000 ) {
@@ -832,13 +826,12 @@ void SV_SendClientSnapshot( client_t *client ) {
 		// MW - my attempt to fix illegible server message errors caused by
 		// packet fragmentation of initial snapshot.
 		//rww - reusing this code here
-		if (client->state && client->netchan.unsentFragments)
-        {
-            SV_Netchan_TransmitNextFragment(&client->netchan);
-            // Spacing out fragments based on the client's 'rate'
-            client->nextSnapshotTime = svs.time + SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
-            return; // Exit and let the server process other players
-        }
+		if (client->state && client->netchan.unsentFragments) {
+	        SV_Netchan_TransmitNextFragment(&client->netchan);
+	        // Calculate when the next fragment can go out based on rate
+	        client->nextSnapshotTime = svs.time + SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
+	        return; 
+	    }
 
 		// record information about the message
 		client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg.cursize;
@@ -906,30 +899,25 @@ SV_SendClientMessages
 =======================
 */
 void SV_SendClientMessages( void ) {
-	int			i;
-	client_t	*c;
+    int i;
+    client_t *c;
 
-	// send a message to each connected client
-	for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
-		if (!c->state) {
-			continue;		// not connected
-		}
+    for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
+        if (!c->state) continue;
 
-		// --- HIGH PING OPTIMIZATION ---
-        // If we have fragments waiting, we MUST try to send them now.
-        // We do this BEFORE the time check so fragments aren't delayed by the snapshot timer.
-        if ( c->netchan.unsentFragments ) {
-            // Calling this ensures the fragment logic in your SV_SendMessageToClient triggers
-            SV_SendMessageToClient( NULL, c ); 
+        // Check time first (Stock behavior)
+        if ( svs.time < c->nextSnapshotTime ) {
             continue;
         }
 
-		if ( svs.time < c->nextSnapshotTime ) {
-			continue;		// not time yet
-		}
+        // Handle fragments only when it's time (Stock behavior)
+        if ( c->netchan.unsentFragments ) {
+            c->nextSnapshotTime = svs.time + 
+                SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
+            SV_Netchan_TransmitNextFragment( &c->netchan );
+            continue;
+        }
 
-		// generate and send a new message
-		SV_SendClientSnapshot( c );
-	}
+        SV_SendClientSnapshot( c );
+    }
 }
-
