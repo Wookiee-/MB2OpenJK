@@ -1,46 +1,55 @@
-### 1. `sv_snapshot.cpp` Comprehensive Optimizations
+# Network Performance & Safety Optimizations
 
-These changes stabilize high-latency connections (200ms+) by implementing deeper delta searches, proactive fragment management, and smarter overflow recovery.
+This document outlines the specific differences between the optimized networking stack and the stock OpenJK engine.
 
-* **Deep Delta Recovery Search (Function: `SV_WriteSnapshotToClient`, Line 144)**
-    * **Stock:** Uses a rigid check that triggers a "Full Snapshot" if the client hasn't acknowledged a packet in ~800ms.
-    * **Optimized:** Implements a search loop `for ( i = 1 ; i < PACKET_BACKUP ; i++ )` that scans the backup buffer for any valid acknowledged frame.
-    * **Result:** Allows the server to find a valid delta base up to 32 frames back, preventing the massive "Full Gamestate" stutters (1-second freezes) common on high-ping connections.
+## 1. Delta Compression & Scoreboard Ping
+**Function:** `SV_WriteSnapshotToClient` (Line 144)
 
-* **Reliable Command Throttling (Function: `SV_UpdateServerCommandsToClient`, Line 240)**
-    * **Stock:** Blindly writes all unacknowledged reliable commands until the buffer overflows.
-    * **Optimized:** Added a safety check: `if ( msg->cursize > (MAX_MSGLEN - 2048) )`.
-    * **Result:** It stops writing reliable commands if the packet is nearing the 16KB limit, preventing a hard overflow and ensuring the essential snapshot data can still fit.
+| Optimization | Stock (sv_snapshot_stock.cpp) | Optimized (sv_snapshot.cpp) |
+| :--- | :--- | :--- |
+| **Logic** | Uses dynamic lookup against `PACKET_MASK`. | Improved demo safety and direct frame tracking. |
+| **Pacing Safety** | Simple out-of-date packet check. | Explicitly flags `rateDelayed` if fragments are pending. |
 
-* **Smart Overflow Management & Recovery (Function: `SV_SendClientSnapshot`, Line 661)**
-    * **Stock:** Simply prints a warning and clears the message, leading to dropped frames or "Connection Interrupted" stutters.
-    * **Optimized:** If a message overflows, the server clears the buffer, sets `client->rateDelayed = qtrue`, and immediately re-attempts a "stripped down" snapshot.
-    * **Result:** Actively manages data bursts during heavy combat to keep the client in sync instead of failing the transmission.
+**Impact:** Prevents "phantom" delta compression attempts when the network is congested, ensuring the client receives clean data without "ping spikes" on the scoreboard.
 
-* **Proactive Fragment Pumping (Function: `SV_SendClientMessages`, Line 707)**
-    * **Stock:** Pending fragments must wait for the `nextSnapshotTime` timer to expire before they are sent.
-    * **Optimized:** Moved the fragment check to the top of the loop: `if ( c->netchan.unsentFragments ) { SV_SendMessageToClient( NULL, c ); continue; }`.
-    * **Result:** Prioritizes pending fragments, pushing them out as fast as the client's rate allows. This significantly reduces the "999" lag icon by bypassing snapshot timing gates.
+## 2. Reliable Command Throttling (Anti-Overflow)
+**Function:** `SV_UpdateServerCommandsToClient` (Line 240)
 
-* **Precision Rate-Delay Calculation (Function: `SV_RateMsec`, Line 576)**
-    * **Stock:** Clamps message size to a fixed 1500 bytes for rate calculations.
-    * **Optimized:** Clamps to `MAX_MSGLEN` (16384 bytes) to reflect modern snapshot sizes.
-    * **Result:** Provides smoother packet intervals and prevents the server from overwhelming the client's bandwidth setting.
+* **Stock:** Blindly writes all pending reliable commands (chat, sounds, triggers) into the message buffer until it overflows.
+* **Optimized:** Adds a `MAX_MSGLEN - 2048` safety buffer.
+* **Code:**
+    ```cpp
+    if ( msg->cursize > (MAX_MSGLEN - 2048) ) { 
+        Com_DPrintf("WARNING: Throttling reliable commands for %s to prevent overflow\n", client->name);
+        break; 
+    }
+    ```
+**Impact:** Eliminates the "Reliable Command Overflow" disconnect bug. The server will now defer extra commands to the next packet instead of kicking the player.
 
-* **Thread-Safe Fragment Handling (Function: `SV_SendMessageToClient`, Line 603)**
-    * **Stock:** Uses a `while` loop that could potentially hang the server thread if fragments are backed up.
-    * **Optimized:** Replaced with an `if` block that sends a single fragment and exits, updating `nextSnapshotTime` based on `SV_RateMsec`.
-    * **Result:** Ensures one lagging player cannot hang the entire server thread while processing fragments.
+## 3. Dedicated Server "Duel Culling"
+**Function:** `SV_AddEntitiesVisibleFromPoint` (Line 384)
 
-* **Duel Culling Support (Lines 319, 513, and 553)**
-    * **Stock:** No logic to cull entities based on duel status.
-    * **Optimized:** Integrated `DuelCull` checks into `SV_AddEntitiesVisibleFromPoint` and `SV_BuildClientSnapshot`.
-    * **Result:** Reduces network traffic for players in duels by not sending entity data for players they cannot see or interact with.
+* **Stock:** No specialized entity filtering for private match types.
+* **Optimized:** Implements `DuelCull()` logic on dedicated builds.
+* **Impact:** Actively hides entities for spectators or players in other duels. This significantly reduces the snapshot size and prevents lag in high-population duel servers.
 
-* **Dynamic Cull Distance (Line 274)**
-    * **Stock:** Uses a hardcoded or default distance for entity culling.
-    * **Optimized:** Initialized `g_svCullDist = 4096.0f;`.
-    * **Result:** Provides a standard, high-performance base for entity visibility checks.
+## 4. Non-Blocking Fragment Pacing
+**Functions:** `SV_SendMessageToClient` (Line 598) and `SV_SendClientMessages` (Line 809)
+
+* **Stock:** Uses a `while` loop that forces the server to process all fragments before moving on, which can "hitch" the server thread.
+* **Optimized:** Uses an `if` check that returns control back to the engine immediately after sending one fragment.
+* **Timing:** Dynamically recalculates `nextSnapshotTime` for every fragment using `SV_RateMsec`.
+
+**Impact:** Prevents one laggy player from causing "micro-stutters" for the rest of the server. Movement remains fluid for all players regardless of individual connection quality.
+
+## 5. Snapshot Overflow Recovery
+**Function:** `SV_SendClientSnapshot` (Line 762)
+
+* **Stock:** If a message overflows, it prints a warning and clears the message, often resulting in a lost frame.
+* **Optimized:** Detects the overflow and attempts a "Data Reduction" pass.
+* **Recovery Logic:** It re-initializes the message, prioritizes reliable commands, and forces a delta compression pass to try and fit the essential data into the packet.
+
+**Impact:** Prevents the server from sending empty/broken packets during intense combat, maintaining synchronization even when data limits are reached.
 
 # OpenJK
 
