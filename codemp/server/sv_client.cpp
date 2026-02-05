@@ -36,7 +36,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server/sv_gameapi.h"
 
 static void SV_CloseDownload( client_t *cl );
-int SV_RateMsec(client_t *client, int messageSize);
 
 /*
 =================
