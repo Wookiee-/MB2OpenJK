@@ -137,7 +137,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 		client->deltaMessage = client->netchan.outgoingSequence;
 	}
 
-	// try to use a previous frame as the source for delta compressing the snapshot
+		// try to use a previous frame as the source for delta compressing the snapshot
 	if ( deltaMessage <= 0 || client->state != CS_ACTIVE ) {
 		// client is asking for a retransmit
 		oldframe = NULL;
@@ -204,9 +204,15 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	MSG_WriteByte (msg, lastframe);
 
 	snapFlags = svs.snapFlagServerBit;
+
+	if ( !oldframe ) {
+	    if (client->netchan.unsentFragments) {
+	        client->rateDelayed = qtrue;
+	    }
+	}
+
 	if ( client->rateDelayed ) {
 		snapFlags |= SNAPFLAG_RATE_DELAYED;
-		frame->ps.m_iVehicleNum = 0; 
 	}
 	if ( client->state != CS_ACTIVE ) {
 		snapFlags |= SNAPFLAG_NOT_ACTIVE;
@@ -282,22 +288,16 @@ SV_UpdateServerCommandsToClient
 */
 void SV_UpdateServerCommandsToClient( client_t *client, msg_t *msg ) {
 	int		i;
-	int		ack;
+	int		reliableAcknowledge;
 
-	// Use bot-specific acknowledge if recording a bot demo
 	if ( client->demo.isBot && client->demo.demorecording ) {
-		ack = client->demo.botReliableAcknowledge;
+		reliableAcknowledge = client->demo.botReliableAcknowledge;
 	} else {
-		ack = client->reliableAcknowledge;
+		reliableAcknowledge = client->reliableAcknowledge;
 	}
 
 	// write any unacknowledged serverCommands
-	for ( i = ack + 1 ; i <= client->reliableSequence ; i++ ) {
-		if ( msg->cursize > (MAX_MSGLEN - 2048) ) { 
-			Com_DPrintf("WARNING: Throttling reliable commands for %s to prevent overflow\n", client->name);
-			break; 
-		}
-
+	for ( i = reliableAcknowledge + 1 ; i <= client->reliableSequence ; i++ ) {
 		MSG_WriteByte( msg, svc_serverCommand );
 		MSG_WriteLong( msg, i );
 		MSG_WriteString( msg, client->reliableCommands[ i & (MAX_RELIABLE_COMMANDS-1) ] );
@@ -681,14 +681,15 @@ to take to clear, based on the current rate
 ====================
 */
 #define	HEADER_RATE_BYTES	48		// include our header, IP header, and some overhead
-static int SV_RateMsec( client_t *client, int messageSize ) {
+int SV_RateMsec( client_t *client, int messageSize ) {
 	int		rate;
 	int		rateMsec;
 
 	// individual messages will never be larger than fragment size
-	if ( messageSize > MAX_MSGLEN ) {
-		messageSize = MAX_MSGLEN;
+	if ( messageSize > 1500 ) {
+		messageSize = 1500;
 	}
+	
 	rate = client->rate;
 	if ( sv_maxRate->integer ) {
 		if ( sv_maxRate->integer < 1000 ) {
@@ -723,13 +724,28 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	int			rateMsec;
 
+	// MW - my attempt to fix illegible server message errors caused by
+	// packet fragmentation of initial snapshot.
     // NEW: Prevents one laggy player from hanging the whole server thread
-    if (client->state && client->netchan.unsentFragments) {
-        SV_Netchan_TransmitNextFragment(&client->netchan);
-        // Calculate when the next fragment can go out based on rate
-        client->nextSnapshotTime = svs.time + SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
-        return; 
-    }
+	while (client->state && client->netchan.unsentFragments && svs.time >= client->nextSnapshotTime) {
+		
+		// 1. Calculate the cost of the fragment we are about to send
+		int msec = SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
+		
+		// 2. Transmit it
+		SV_Netchan_TransmitNextFragment(&client->netchan);
+		
+		// 3. Push the 'next' allowed time forward
+		// If the player has a high rate, this might only push it forward by 10-20ms,
+		// allowing the 'while' loop to run again immediately.
+		client->nextSnapshotTime = svs.time + msec;
+
+		// 4. Safety break: If we've pushed the next time into the future, 
+		// stop the loop so we don't choke the server.
+		if (client->nextSnapshotTime > svs.time) {
+			break;
+		}
+	}
 
 	// record information about the message
 	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
@@ -817,13 +833,25 @@ void SV_SendClientSnapshot( client_t *client ) {
 		// MW - my attempt to fix illegible server message errors caused by
 		// packet fragmentation of initial snapshot.
 		//rww - reusing this code here
-		if (client->state && client->netchan.unsentFragments)
-        {
-            SV_Netchan_TransmitNextFragment(&client->netchan);
-            // Spacing out fragments based on the client's 'rate'
-            client->nextSnapshotTime = svs.time + SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
-            return; // Exit and let the server process other players
-        }
+		while (client->state && client->netchan.unsentFragments && svs.time >= client->nextSnapshotTime) {
+			
+			// 1. Calculate the cost of the fragment we are about to send
+			int msec = SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
+			
+			// 2. Transmit it
+			SV_Netchan_TransmitNextFragment(&client->netchan);
+			
+			// 3. Push the 'next' allowed time forward
+			// If the player has a high rate, this might only push it forward by 10-20ms,
+			// allowing the 'while' loop to run again immediately.
+			client->nextSnapshotTime = svs.time + msec;
+
+			// 4. Safety break: If we've pushed the next time into the future, 
+			// stop the loop so we don't choke the server.
+			if (client->nextSnapshotTime > svs.time) {
+				break;
+			}
+		}
 
 		// record information about the message
 		client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg.cursize;
@@ -891,30 +919,29 @@ SV_SendClientMessages
 =======================
 */
 void SV_SendClientMessages( void ) {
-	int			i;
-	client_t	*c;
+    int i;
+    client_t *c;
 
-	// send a message to each connected client
-	for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
-		if (!c->state) {
-			continue;		// not connected
+    for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
+        if (!c->state) continue;
+
+        // Check time first (Stock behavior)
+        if ( svs.time < c->nextSnapshotTime ) {
+            continue;
+        }
+
+        if ( c->netchan.unsentFragments ) {
+			while (c->netchan.unsentFragments && svs.time >= c->nextSnapshotTime) {
+				int msec = SV_RateMsec(c, c->netchan.unsentLength - c->netchan.unsentFragmentStart);
+				SV_Netchan_TransmitNextFragment(&c->netchan);
+				c->nextSnapshotTime = svs.time + msec;
+
+				if (c->nextSnapshotTime > svs.time) {
+					break; // Stop burst if rate limit hit
+				}
+			}
+			continue;
 		}
-
-		if ( svs.time < c->nextSnapshotTime ) {
-			continue;		// not time yet
-		}
-
-		// send additional message fragments if the last message
-		// was too large to send at once
-		if ( c->netchan.unsentFragments ) {
-		    c->nextSnapshotTime = svs.time +
-		        SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
-		    SV_Netchan_TransmitNextFragment( &c->netchan );
-		    continue;
-		}
-
-		// generate and send a new message
-		SV_SendClientSnapshot( c );
-	}
+        SV_SendClientSnapshot( c );
+    }
 }
-

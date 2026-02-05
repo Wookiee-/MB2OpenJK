@@ -31,6 +31,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server/duel_cull.h"
 
 extern int DuelCull(sharedEntity_t *a, sharedEntity_t *b);
+extern int SV_RateMsec( struct client_s *client, int messageSize );
 
 //=============================================================================
 
