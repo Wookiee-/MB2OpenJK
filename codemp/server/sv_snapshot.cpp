@@ -681,7 +681,7 @@ to take to clear, based on the current rate
 ====================
 */
 #define	HEADER_RATE_BYTES	48		// include our header, IP header, and some overhead
-int SV_RateMsec( client_t *client, int messageSize ) {
+static int SV_RateMsec( client_t *client, int messageSize ) {
 	int		rate;
 	int		rateMsec;
 
@@ -727,25 +727,18 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
     // NEW: Prevents one laggy player from hanging the whole server thread
-	while (client->state && client->netchan.unsentFragments && svs.time >= client->nextSnapshotTime) {
-		
-		// 1. Calculate the cost of the fragment we are about to send
-		int msec = SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
-		
-		// 2. Transmit it
-		SV_Netchan_TransmitNextFragment(&client->netchan);
-		
-		// 3. Push the 'next' allowed time forward
-		// If the player has a high rate, this might only push it forward by 10-20ms,
-		// allowing the 'while' loop to run again immediately.
-		client->nextSnapshotTime = svs.time + msec;
+	while (client->state >= CS_CONNECTED && client->netchan.unsentFragments)
+    {
+        // send additional message fragments if the last message
+        // was too large to send at once
+        Com_Printf("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+        
+        SV_Netchan_TransmitNextFragment(&client->netchan);
+    }
 
-		// 4. Safety break: If we've pushed the next time into the future, 
-		// stop the loop so we don't choke the server.
-		if (client->nextSnapshotTime > svs.time) {
-			break;
-		}
-	}
+    // Reset the schedule so the next snapshot isn't delayed by the fragments we just sent.
+    // This is the "magic fix" for the tiny teleporting/stuttering.
+    client->nextSnapshotTime = svs.time;
 
 	// record information about the message
 	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
@@ -833,25 +826,18 @@ void SV_SendClientSnapshot( client_t *client ) {
 		// MW - my attempt to fix illegible server message errors caused by
 		// packet fragmentation of initial snapshot.
 		//rww - reusing this code here
-		while (client->state && client->netchan.unsentFragments && svs.time >= client->nextSnapshotTime) {
+		while (client->state >= CS_CONNECTED && client->netchan.unsentFragments)
+		{
+			// send additional message fragments if the last message
+			// was too large to send at once
+			Com_Printf("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
 			
-			// 1. Calculate the cost of the fragment we are about to send
-			int msec = SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
-			
-			// 2. Transmit it
 			SV_Netchan_TransmitNextFragment(&client->netchan);
-			
-			// 3. Push the 'next' allowed time forward
-			// If the player has a high rate, this might only push it forward by 10-20ms,
-			// allowing the 'while' loop to run again immediately.
-			client->nextSnapshotTime = svs.time + msec;
-
-			// 4. Safety break: If we've pushed the next time into the future, 
-			// stop the loop so we don't choke the server.
-			if (client->nextSnapshotTime > svs.time) {
-				break;
-			}
 		}
+
+		// Reset the schedule so the next snapshot isn't delayed by the fragments we just sent.
+		// This is the "magic fix" for the tiny teleporting/stuttering.
+		client->nextSnapshotTime = svs.time;
 
 		// record information about the message
 		client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg.cursize;
@@ -930,18 +916,19 @@ void SV_SendClientMessages( void ) {
             continue;
         }
 
+        // 2. THE FIX: If we have fragments, blast them all out NOW
         if ( c->netchan.unsentFragments ) {
-			while (c->netchan.unsentFragments && svs.time >= c->nextSnapshotTime) {
-				int msec = SV_RateMsec(c, c->netchan.unsentLength - c->netchan.unsentFragmentStart);
-				SV_Netchan_TransmitNextFragment(&c->netchan);
-				c->nextSnapshotTime = svs.time + msec;
+            while (c->state >= CS_CONNECTED && c->netchan.unsentFragments) {
+                // Log it so you can see it working
+                Com_Printf("[ISM] Flushing fragments for %s\n", c->name);
+                SV_Netchan_TransmitNextFragment( &c->netchan );
+            }
 
-				if (c->nextSnapshotTime > svs.time) {
-					break; // Stop burst if rate limit hit
-				}
-			}
-			continue;
-		}
+            // Reset the timer so the next real snapshot isn't delayed by the burst
+            c->nextSnapshotTime = svs.time;
+            continue;
+        }
+
         SV_SendClientSnapshot( c );
     }
 }
