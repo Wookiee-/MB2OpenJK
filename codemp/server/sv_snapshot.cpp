@@ -784,28 +784,17 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 		client->rateDelayed = qtrue;
 	}
 
-	// 1. Calculate the ideal interval
-    int interval = (int)(rateMsec * com_timescale->value);
+	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
 
-    // 2. The Hybrid Approach: Perfect for VRR, but still Absolute
-    // If the next scheduled time is in the past, we are "late," 
-    // so we reset to 'svs.time' (Safe Absolute Timing).
-    if ( client->nextSnapshotTime < svs.time ) {
-        client->nextSnapshotTime = svs.time + interval;
-    } else {
-        // If we are on schedule, we add to the existing time.
-        // This keeps the packet spacing mathematically perfect (VRR Friendly).
-        client->nextSnapshotTime += interval;
-    }
-
-    // 3. Connection State Safety
-    // don't pile up empty snapshots while connecting
-    if ( client->state != CS_ACTIVE ) {
-        int minWait = (int)(1000 * com_timescale->value);
-        if ( !*client->downloadName && client->nextSnapshotTime < svs.time + minWait ) {
-            client->nextSnapshotTime = svs.time + minWait;
-        }
-    }
+	// don't pile up empty snapshots while connecting
+	if ( client->state != CS_ACTIVE ) {
+		// a gigantic connection message may have already put the nextSnapshotTime
+		// more than a second away, so don't shorten it
+		// do shorten if client is downloading
+		if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
+			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
+		}
+	}
 }
 
 
