@@ -489,25 +489,16 @@ void SV_SendClientGameState( client_t *client ) {
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
 	// While we have fragments AND it's time to send them...
-	while (client->state && client->netchan.unsentFragments && svs.time >= client->nextSnapshotTime) {
-		
-		// 1. Calculate the cost of the fragment we are about to send
-		int msec = SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
-		
-		// 2. Transmit it
-		SV_Netchan_TransmitNextFragment(&client->netchan);
-		
-		// 3. Push the 'next' allowed time forward
-		// If the player has a high rate, this might only push it forward by 10-20ms,
-		// allowing the 'while' loop to run again immediately.
-		client->nextSnapshotTime = svs.time + msec;
+	while (client->state >= CS_ACTIVE && client->netchan.unsentFragments)
+    {
+        // send additional message fragments if the last message
+        // was too large to send at once
+        Com_Printf("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+        
+        SV_Netchan_TransmitNextFragment(&client->netchan);
+    }
 
-		// 4. Safety break: If we've pushed the next time into the future, 
-		// stop the loop so we don't choke the server.
-		if (client->nextSnapshotTime > svs.time) {
-			break;
-		}
-	}
+	client->nextSnapshotTime = svs.time;	
 
 	Com_DPrintf ("SV_SendClientGameState() for %s\n", client->name);
 	Com_DPrintf( "Going from CS_CONNECTED to CS_PRIMED for %s\n", client->name );
