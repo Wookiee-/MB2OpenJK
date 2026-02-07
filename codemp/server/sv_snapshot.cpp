@@ -727,11 +727,10 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
     // NEW: Prevents one laggy player from hanging the whole server thread
-	while (client->state >= CS_CONNECTED && client->netchan.unsentFragments)
+	while (client->state && client->netchan.unsentFragments)
     {
         // send additional message fragments if the last message
         // was too large to send at once
-        Com_Printf("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
         
         SV_Netchan_TransmitNextFragment(&client->netchan);
     }
@@ -784,17 +783,16 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 		client->rateDelayed = qtrue;
 	}
 
-	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
-
-	// don't pile up empty snapshots while connecting
-	if ( client->state != CS_ACTIVE ) {
-		// a gigantic connection message may have already put the nextSnapshotTime
-		// more than a second away, so don't shorten it
-		// do shorten if client is downloading
-		if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
-			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
-		}
-	}
+	// THE FIX: Only use the delayed timing if we aren't in a duel/active gameplay.
+    // If we are CS_ACTIVE, keep the 'svs.time' we set at the top.
+    if (client->state != CS_ACTIVE) {
+        client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
+        
+        // don't pile up empty snapshots while connecting
+        if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
+            client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
+        }
+    }
 }
 
 
@@ -826,12 +824,8 @@ void SV_SendClientSnapshot( client_t *client ) {
 		// MW - my attempt to fix illegible server message errors caused by
 		// packet fragmentation of initial snapshot.
 		//rww - reusing this code here
-		while (client->state >= CS_CONNECTED && client->netchan.unsentFragments)
-		{
-			// send additional message fragments if the last message
-			// was too large to send at once
-			Com_Printf("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
-			
+		while (client->state && client->netchan.unsentFragments)
+		{		
 			SV_Netchan_TransmitNextFragment(&client->netchan);
 		}
 
@@ -905,30 +899,32 @@ SV_SendClientMessages
 =======================
 */
 void SV_SendClientMessages( void ) {
-    int i;
-    client_t *c;
+    int         i;
+    client_t    *c;
 
+    // send a message to each connected client
     for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
-        if (!c->state) continue;
+        if (!c->state) {
+            continue;        // not connected
+        }
 
-        // Check time first (Stock behavior)
+        // 1. Check if it's even time to talk to this client yet
         if ( svs.time < c->nextSnapshotTime ) {
-            continue;
+            continue;        // not time yet
         }
 
         // 2. THE FIX: If we have fragments, blast them all out NOW
         if ( c->netchan.unsentFragments ) {
-            while (c->state >= CS_CONNECTED && c->netchan.unsentFragments) {
+            while (c->state && c->netchan.unsentFragments) {
                 // Log it so you can see it working
-                Com_Printf("[ISM] Flushing fragments for %s\n", c->name);
                 SV_Netchan_TransmitNextFragment( &c->netchan );
             }
 
             // Reset the timer so the next real snapshot isn't delayed by the burst
             c->nextSnapshotTime = svs.time;
-            continue;
         }
 
+        // 3. If the pipe is clear, generate and send a new message
         SV_SendClientSnapshot( c );
     }
 }
