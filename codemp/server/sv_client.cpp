@@ -486,17 +486,6 @@ void SV_SendClientGameState( client_t *client ) {
 
 	MSG_Init( &msg, msgBuffer, sizeof( msgBuffer ) );
 
-	// MW - my attempt to fix illegible server message errors caused by
-	// packet fragmentation of initial snapshot.
-	// While we have fragments AND it's time to send them...
-	while (client->state && client->netchan.unsentFragments)
-    {
-        
-        SV_Netchan_TransmitNextFragment(&client->netchan);
-    }
-
-	client->nextSnapshotTime = svs.time;	
-
 	Com_DPrintf ("SV_SendClientGameState() for %s\n", client->name);
 	Com_DPrintf( "Going from CS_CONNECTED to CS_PRIMED for %s\n", client->name );
 	if ( client->state == CS_CONNECTED )
