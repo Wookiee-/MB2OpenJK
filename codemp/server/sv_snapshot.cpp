@@ -783,17 +783,16 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 		client->rateDelayed = qtrue;
 	}
 
-	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
-
-	// don't pile up empty snapshots while connecting
-	if ( client->state != CS_ACTIVE ) {
-		// a gigantic connection message may have already put the nextSnapshotTime
-		// more than a second away, so don't shorten it
-		// do shorten if client is downloading
-		if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
-			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
-		}
-	}
+	// THE FIX: Only use the delayed timing if we aren't in a duel/active gameplay.
+    // If we are CS_ACTIVE, keep the 'svs.time' we set at the top.
+    if (client->state != CS_ACTIVE) {
+        client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
+        
+        // don't pile up empty snapshots while connecting
+        if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
+            client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
+        }
+    }
 }
 
 
