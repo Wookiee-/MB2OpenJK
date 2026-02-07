@@ -489,11 +489,8 @@ void SV_SendClientGameState( client_t *client ) {
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
 	// While we have fragments AND it's time to send them...
-	while (client->state >= CS_ACTIVE && client->netchan.unsentFragments)
+	while (client->state && client->netchan.unsentFragments)
     {
-        // send additional message fragments if the last message
-        // was too large to send at once
-        Com_Printf("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
         
         SV_Netchan_TransmitNextFragment(&client->netchan);
     }

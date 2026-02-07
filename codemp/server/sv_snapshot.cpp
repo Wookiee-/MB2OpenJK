@@ -727,11 +727,10 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
     // NEW: Prevents one laggy player from hanging the whole server thread
-	while (client->state >= CS_CONNECTED && client->netchan.unsentFragments)
+	while (client->state && client->netchan.unsentFragments)
     {
         // send additional message fragments if the last message
         // was too large to send at once
-        Com_Printf("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
         
         SV_Netchan_TransmitNextFragment(&client->netchan);
     }
@@ -826,12 +825,8 @@ void SV_SendClientSnapshot( client_t *client ) {
 		// MW - my attempt to fix illegible server message errors caused by
 		// packet fragmentation of initial snapshot.
 		//rww - reusing this code here
-		while (client->state >= CS_CONNECTED && client->netchan.unsentFragments)
-		{
-			// send additional message fragments if the last message
-			// was too large to send at once
-			Com_Printf("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
-			
+		while (client->state && client->netchan.unsentFragments)
+		{		
 			SV_Netchan_TransmitNextFragment(&client->netchan);
 		}
 
@@ -921,15 +916,13 @@ void SV_SendClientMessages( void ) {
 
         // 2. THE FIX: If we have fragments, blast them all out NOW
         if ( c->netchan.unsentFragments ) {
-            while (c->state >= CS_CONNECTED && c->netchan.unsentFragments) {
+            while (c->state && c->netchan.unsentFragments) {
                 // Log it so you can see it working
-                Com_Printf("[ISM] Flushing fragments for %s\n", c->name);
                 SV_Netchan_TransmitNextFragment( &c->netchan );
             }
 
             // Reset the timer so the next real snapshot isn't delayed by the burst
             c->nextSnapshotTime = svs.time;
-            continue;
         }
 
         // 3. If the pipe is clear, generate and send a new message
