@@ -127,6 +127,11 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	int					snapFlags;
 	int					deltaMessage;
 
+	if ( client->netchan.unsentFragments ) {
+        client->rateDelayed = qtrue;
+        return; // Exit early to prevent "Snapshot Clumping"
+    }
+
 	// this is the snapshot we are creating
 	frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
 
@@ -137,7 +142,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 		client->deltaMessage = client->netchan.outgoingSequence;
 	}
 
-	// try to use a previous frame as the source for delta compressing the snapshot
+		// try to use a previous frame as the source for delta compressing the snapshot
 	if ( deltaMessage <= 0 || client->state != CS_ACTIVE ) {
 		// client is asking for a retransmit
 		oldframe = NULL;
@@ -204,6 +209,13 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	MSG_WriteByte (msg, lastframe);
 
 	snapFlags = svs.snapFlagServerBit;
+
+	if ( !oldframe ) {
+	    if (client->netchan.unsentFragments) {
+	        client->rateDelayed = qtrue;
+	    }
+	}
+
 	if ( client->rateDelayed ) {
 		snapFlags |= SNAPFLAG_RATE_DELAYED;
 	}
@@ -360,7 +372,7 @@ static void SV_AddEntToSnapshot( svEntity_t *svEnt, sharedEntity_t *gEnt, snapsh
 SV_AddEntitiesVisibleFromPoint
 ===============
 */
-float g_svCullDist = -1.0f;
+float g_svCullDist = 4096.0f;
 static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *frame,
 #ifndef DEDICATED
 									snapshotEntityNumbers_t *eNums, qboolean portal )
@@ -682,6 +694,7 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 	if ( messageSize > 1500 ) {
 		messageSize = 1500;
 	}
+	
 	rate = client->rate;
 	if ( sv_maxRate->integer ) {
 		if ( sv_maxRate->integer < 1000 ) {
@@ -714,73 +727,64 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 =======================
 */
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
-	int			rateMsec;
+    int         rateMsec;
 
-	// MW - my attempt to fix illegible server message errors caused by
-	// packet fragmentation of initial snapshot.
-	while(client->state&&client->netchan.unsentFragments)
-	{
-		// send additional message fragments if the last message
-		// was too large to send at once
-		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
-		SV_Netchan_TransmitNextFragment(&client->netchan);
-	}
+    // We removed the fragment loop here because it's now handled 
+    // in the main loop before we build the snapshot.
 
-	// record information about the message
-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = -1;
+    // record information about the message
+    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
+    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
+    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = -1;
 
-	// save the message to demo.  this must happen before sending over network as that encodes the backing databuf
-	if ( client->demo.demorecording && !client->demo.demowaiting ) {
-		msg_t msgcopy = *msg;
-		MSG_WriteByte( &msgcopy, svc_EOF );
-		SV_WriteDemoMessage( client, &msgcopy, 0 );
-	}
+    // save the message to demo
+    if ( client->demo.demorecording && !client->demo.demowaiting ) {
+        msg_t msgcopy = *msg;
+        MSG_WriteByte( &msgcopy, svc_EOF );
+        SV_WriteDemoMessage( client, &msgcopy, 0 );
+    }
 
-	// bots need to have their snapshots built, but
-	// they query them directly without needing to be sent
-	if ( client->demo.isBot ) {
-		client->netchan.outgoingSequence++;
-		client->demo.botReliableAcknowledge = client->reliableSent;
-		return;
-	}
+    // bots logic
+    if ( client->demo.isBot ) {
+        client->netchan.outgoingSequence++;
+        client->demo.botReliableAcknowledge = client->reliableSent;
+        return;
+    }
 
-	// send the datagram
-	SV_Netchan_Transmit( client, msg );	//msg->cursize, msg->data );
+    // send the datagram
+    SV_Netchan_Transmit( client, msg );
 
-	// set nextSnapshotTime based on rate and requested number of updates
+    // --- ABSOLUTE TIMING OVERRIDE ---
 
-	// local clients get snapshots every server frame
-	// TTimo - https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=491
-	// added sv_lanForceRate check
-	if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
-		client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
-		return;
-	}
+    // 1. LAN / Loopback logic
+    if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
+        client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
+        return;
+    }
 
-	// normal rate / snapshotMsec calculation
-	rateMsec = SV_RateMsec( client, msg->cursize );
+    // 2. Standard Rate calculation
+    rateMsec = SV_RateMsec( client, msg->cursize );
 
-	if ( rateMsec < client->snapshotMsec ) {
-		// never send more packets than this, no matter what the rate is at
-		rateMsec = client->snapshotMsec;
-		client->rateDelayed = qfalse;
-	} else {
-		client->rateDelayed = qtrue;
-	}
+    if ( rateMsec < client->snapshotMsec ) {
+        rateMsec = client->snapshotMsec;
+        client->rateDelayed = qfalse;
+    } else {
+        client->rateDelayed = qtrue;
+    }
 
-	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
-
-	// don't pile up empty snapshots while connecting
-	if ( client->state != CS_ACTIVE ) {
-		// a gigantic connection message may have already put the nextSnapshotTime
-		// more than a second away, so don't shorten it
-		// do shorten if client is downloading
-		if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
-			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
-		}
-	}
+    // 3. THE FIX: If the player is in-game, skip the calculated delay.
+    // This forces the server to treat every frame as an opportunity to send.
+    if (client->state == CS_ACTIVE) {
+        client->nextSnapshotTime = svs.time; 
+    } else {
+        // Standard behavior for clients in loading screens or downloading
+        client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
+        
+        // Safety cap for connecting clients
+        if ( !*client->downloadName && client->nextSnapshotTime < svs.time + 1000 ) {
+            client->nextSnapshotTime = svs.time + 1000;
+        }
+    }
 }
 
 
@@ -799,7 +803,6 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 	if (!client->sentGamedir)
 	{ //rww - if this is the case then make sure there is an svc_setgame sent before this snap
-		int i = 0;
 
 		MSG_Init (&msg, msg_buf, sizeof(msg_buf));
 
@@ -808,29 +811,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 		MSG_WriteByte (&msg, svc_setgame);
 
-		const char *gamedir = FS_GetCurrentGameDir(true);
-
-		while (gamedir[i])
-		{
-			MSG_WriteByte(&msg, gamedir[i]);
-			i++;
-		}
-		MSG_WriteByte(&msg, 0);
-
-		// MW - my attempt to fix illegible server message errors caused by
-		// packet fragmentation of initial snapshot.
-		//rww - reusing this code here
-		// Change 'while' to 'if' to stop the server from blocking
-		if (client->state && client->netchan.unsentFragments)
-		{
-		    // Send only ONE fragment this frame
-		    SV_Netchan_TransmitNextFragment(&client->netchan);
-
-		    // Calculate a mandatory wait time based on the rate before sending the next piece
-		    client->nextSnapshotTime = svs.time + SV_RateMsec(client, client->netchan.unsentLength - client->netchan.unsentFragmentStart);
-		    
-		    return; // Exit the function and come back next frame
-		}
+		MSG_WriteString(&msg, FS_GetCurrentGameDir(true));
 
 		// record information about the message
 		client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg.cursize;
@@ -877,9 +858,15 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 	// check for overflow
 	if ( msg.overflowed ) {
-		Com_Printf ("WARNING: msg overflowed for %s\n", client->name);
-		MSG_Clear (&msg);
-	}
+        Com_Printf ("WARNING: msg overflowed for %s - Reducing Data...\n", client->name);
+        MSG_Clear (&msg);
+
+        MSG_Init (&msg, msg_buf, sizeof(msg_buf));
+        MSG_WriteLong( &msg, client->lastClientCommand );
+        SV_UpdateServerCommandsToClient( client, &msg );
+
+        SV_WriteSnapshotToClient( client, &msg );
+    }
 
 	SV_SendMessageToClient( &msg, client );
 }
@@ -891,30 +878,28 @@ SV_SendClientMessages
 =======================
 */
 void SV_SendClientMessages( void ) {
-	int			i;
-	client_t	*c;
+    int         i;
+    client_t    *c;
 
-	// send a message to each connected client
-	for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
-		if (!c->state) {
-			continue;		// not connected
-		}
+    // send a message to each connected client
+    for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
+        if (!c->state) {
+            continue;        // not connected
+        }
 
-		if ( svs.time < c->nextSnapshotTime ) {
-			continue;		// not time yet
-		}
+        if ( svs.time < c->nextSnapshotTime ) {
+            continue;        // not time yet
+        }
 
-		// send additional message fragments if the last message
-		// was too large to send at once
-		if ( c->netchan.unsentFragments ) {
-			c->nextSnapshotTime = svs.time +
-				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
-			SV_Netchan_TransmitNextFragment( &c->netchan );
-			continue;
-		}
+        // THE FIX: Blast existing fragments to clear the pipe before the new snap.
+        // This ensures the new snapshot doesn't have to wait for the old one.
+        while (c->state && c->netchan.unsentFragments)
+        {
+            SV_Netchan_TransmitNextFragment(&c->netchan);
+        }
 
-		// generate and send a new message
-		SV_SendClientSnapshot( c );
-	}
+        // generate and send a new message
+        // Since the pipe is now clear, this snapshot will send immediately.
+        SV_SendClientSnapshot( c );
+    }
 }
-
