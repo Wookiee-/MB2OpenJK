@@ -1470,6 +1470,10 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 			continue;
 		}
 
+		if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
+			continue;
+		}
+
 		SV_ClientThink (cl, &cmds[ i ]);
     }
 }
