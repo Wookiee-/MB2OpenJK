@@ -1,41 +1,50 @@
-# Network Performance & Safety Optimizations
+# Network Performance & Safety Optimizations (Absolute Build)
 
-This document outlines the specific differences between the optimized networking stack and the stock OpenJK engine.
+This document outlines the specific differences between the optimized "Absolute" networking stack and the stock OpenJK engine. These changes stabilize high-latency (200ms+) Player-to-Player combat and implement intelligent entity culling for high-population duel servers.
 
-## 1. Delta Compression & Scoreboard Ping
-**Function:** `SV_WriteSnapshotToClient` (Line 144)
+## 1. Delta Compression & Snapshot Pacing
+**Function:** `SV_WriteSnapshotToClient` (sv_snapshot.cpp)
 
-| Optimization | Stock (sv_snapshot_stock.cpp) | Optimized (sv_snapshot.cpp) |
+| Optimization | Stock Logic | Absolute Optimized Logic |
 | :--- | :--- | :--- |
-| **Logic** | Uses dynamic lookup against `PACKET_MASK`. | Improved demo safety and direct frame tracking. |
-| **Pacing Safety** | Simple out-of-date packet check. | Explicitly flags `rateDelayed` if fragments are pending. |
+| **Congestion Gate** | Passive waiting for rate limits. | **Early Exit:** Aborts snapshot generation if `unsentFragments` exist. |
+| **Clumping Prevention** | Simple rate tracking. | Explicitly flags `rateDelayed` to prevent snapshots from bunching together. |
+| **Delta Window** | Static reset thresholds. | **Stock Padding:** Uses `PACKET_BACKUP - 3` to maintain Delta mode during jitter. |
 
-**Impact:** Prevents "phantom" delta compression attempts when the network is congested, ensuring the client receives clean data without "ping spikes" on the scoreboard.
+**Impact:** Prevents "Snapshot Clumping." By returning early when the network pipe is full, it ensures data arrives in evenly-spaced packets, eliminating the "face-hugging" jitter seen at 200ms.
 
-## 2. Dedicated Server "Duel Culling"
-**Function:** `SV_AddEntitiesVisibleFromPoint` (Line 384)
+## 2. Dedicated Server "Duel Isolation" (DuelCull)
+**Function:** `SV_AddEntitiesVisibleFromPoint` & `DuelCull` (duel_cull.cpp)
 
-* **Stock:** No specialized entity filtering for private match types.
-* **Optimized:** Implements `DuelCull()` logic on dedicated builds.
-* **Impact:** Actively hides entities for spectators or players in other duels. This significantly reduces the snapshot size and prevents lag in high-population duel servers.
+* **Isolation Logic:** Implements a specialized `DuelCull()` system to hide bystanders and irrelevant entities for players in an active duel.
+* **Entity Ghosting:** Automatically sets `state->solid = 0` for culled entities, reducing the CPU and network overhead for dueling players.
+* **NPC Safety:** Specifically excludes NPCs from culling to ensure training bots and dummies remain solid and visible.
+* **Engine Logging:** Native tracking for `DuelStart` and `DuelEnd` events, including player names and duel results, written directly to `games.log`.
 
-## 3. Non-Blocking Fragment Pacing
-**Functions:** `SV_SendMessageToClient` (Line 598) and `SV_SendClientMessages` (Line 809)
+**Impact:** Significantly reduces snapshot size and prevents "warping" in servers with high player counts by filtering data to only what is relevant to the combatants.
 
-* **Stock:** Uses a `while` loop that forces the server to process all fragments before moving on, which can "hitch" the server thread.
-* **Optimized:** Uses an `if` check that returns control back to the engine immediately after sending one fragment.
-* **Timing:** Dynamically recalculates `nextSnapshotTime` for every fragment using `SV_RateMsec`.
+## 3. "Absolute" Fragment & Timing Overhaul
+**Functions:** `SV_SendMessageToClient` & `SV_SendClientMessages` (sv_client.cpp / sv_snapshot.cpp)
 
-**Impact:** Prevents one laggy player from causing "micro-stutters" for the rest of the server. Movement remains fluid for all players regardless of individual connection quality.
+* **Fragment Priority:** Replaces stock loops with a "Blast" mechanic. It aggressively clears existing fragments before building new snapshots to ensure the pipe is empty.
+* **Active Timing:** For clients in `CS_ACTIVE` state, the server skips calculated delays, treating every frame as a delivery opportunity once fragments are cleared.
 
-## 4. Snapshot Overflow Recovery
-**Function:** `SV_SendClientSnapshot` (Line 762)
+**Impact:** Provides "Non-Blocking" performance. One laggy player can no longer cause "micro-stutters" for the rest of the server.
 
-* **Stock:** If a message overflows, it prints a warning and clears the message, often resulting in a lost frame.
-* **Optimized:** Detects the overflow and attempts a "Data Reduction" pass.
-* **Recovery Logic:** It re-initializes the message, prioritizes reliable commands, and forces a delta compression pass to try and fit the essential data into the packet.
+## 4. Physics Heartbeat & UserMove Smoothing
+**Function:** `SV_UserMove` (sv_client.cpp)
 
-**Impact:** Prevents the server from sending empty/broken packets during intense combat, maintaining synchronization even when data limits are reached.
+* **Smoothing Cap:** Calculates `msec` between commands and caps it to the server's native rhythm (e.g., 25ms at 40fps).
+* **Jitter Absorption:** If packets arrive in a "bunch" due to latency spikes, the server processes them as smooth steps rather than one giant teleport.
+
+**Impact:** Eliminates the "pull-back" effect. High-ping players (up to 260ms+) appear to move smoothly on the server rather than snapping in jagged bursts.
+
+## 5. Snapshot Overflow Recovery
+**Function:** `SV_SendClientSnapshot` (sv_snapshot.cpp)
+
+* **Data Reduction:** If a message overflows, the server triggers an emergency pass. It re-initializes the message, prioritizes reliable commands, and forces a delta compression pass to fit essential data.
+
+**Impact:** Maintains synchronization even during extreme combat conditions, preventing the server from dropping critical movement frames.
 
 # OpenJK
 
