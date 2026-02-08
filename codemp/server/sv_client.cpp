@@ -1385,10 +1385,12 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 	usercmd_t	*cmd, *oldcmd;
 
 	if ( delta ) {
-		cl->deltaMessage = cl->messageAcknowledge;
-	} else {
-		cl->deltaMessage = -1;
-	}
+        cl->deltaMessage = cl->messageAcknowledge;
+    } else {
+        if (cl->deltaMessage <= 0) {
+            cl->deltaMessage = -1; 
+        }
+    }
 
 	cmdCount = MSG_ReadByte( msg );
 
@@ -1478,6 +1480,21 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 		if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
 			continue;
 		}
+
+		// Helps eliminate "pull-back" for players with 50ms to 260ms+ ping.
+		if (cl->lastUsercmd.serverTime > 0) {
+            // "Stock-like" frame duration. 
+            // At sv_fps 40, this is exactly 25ms.
+            int msec = cmds[i].serverTime - cl->lastUsercmd.serverTime;
+            int frameTime = 1000 / sv_fps->integer; 
+
+            // If jitter bunched packets together (msec > frameTime), 
+            // we smooth it out to the server's native rhythm.
+            if (msec > frameTime) {
+                cmds[i].serverTime = cl->lastUsercmd.serverTime + frameTime;
+            }
+        }
+
 		SV_ClientThink (cl, &cmds[ i ]);
     }
 }

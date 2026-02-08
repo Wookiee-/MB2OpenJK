@@ -127,6 +127,11 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	int					snapFlags;
 	int					deltaMessage;
 
+	if ( client->netchan.unsentFragments ) {
+        client->rateDelayed = qtrue;
+        return; // Exit early to prevent "Snapshot Clumping"
+    }
+
 	// this is the snapshot we are creating
 	frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
 
