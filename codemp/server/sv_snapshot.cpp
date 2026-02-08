@@ -127,11 +127,6 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	int					snapFlags;
 	int					deltaMessage;
 
-	if ( client->netchan.unsentFragments ) {
-        client->rateDelayed = qtrue;
-        return; // Exit early to prevent "Snapshot Clumping"
-    }
-
 	// this is the snapshot we are creating
 	frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
 
@@ -209,12 +204,6 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	MSG_WriteByte (msg, lastframe);
 
 	snapFlags = svs.snapFlagServerBit;
-
-	if ( !oldframe ) {
-	    if (client->netchan.unsentFragments) {
-	        client->rateDelayed = qtrue;
-	    }
-	}
 
 	if ( client->rateDelayed ) {
 		snapFlags |= SNAPFLAG_RATE_DELAYED;
@@ -443,7 +432,7 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
 			}
 		}
 #ifdef DEDICATED
-		if (!skipDuelCull && DuelCull(SV_GentityNum(frame->ps.clientNum), ent) == 1) {
+		if (!skipDuelCull && DuelCull(SV_GentityNum(frame->ps.clientNum), ent, &frame->ps) == 1) {
 			continue;
 		}
 #endif
@@ -663,7 +652,7 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		*state = ent->s;
 		
 #ifdef DEDICATED
-		if (DuelCull(client->gentity, ent)) {
+		if (DuelCull(client->gentity, ent, ps)) {
 			state->solid = 0;
 		}
 #endif		
@@ -729,32 +718,29 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
     int         rateMsec;
 
-    // We removed the fragment loop here because it's now handled 
-    // in the main loop before we build the snapshot.
-
-    // record information about the message
+    // Record information about the message
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = -1;
 
-    // save the message to demo
+    // Save the message to demo
     if ( client->demo.demorecording && !client->demo.demowaiting ) {
         msg_t msgcopy = *msg;
         MSG_WriteByte( &msgcopy, svc_EOF );
         SV_WriteDemoMessage( client, &msgcopy, 0 );
     }
 
-    // bots logic
+    // Bots logic
     if ( client->demo.isBot ) {
         client->netchan.outgoingSequence++;
         client->demo.botReliableAcknowledge = client->reliableSent;
         return;
     }
 
-    // send the datagram
+    // Send the datagram
     SV_Netchan_Transmit( client, msg );
 
-    // --- ABSOLUTE TIMING OVERRIDE ---
+    // --- RESTORED STOCK RATE LOGIC ---
 
     // 1. LAN / Loopback logic
     if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
@@ -763,24 +749,23 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
     }
 
     // 2. Standard Rate calculation
+    // This calculates how long we MUST wait before sending again based on packet size
     rateMsec = SV_RateMsec( client, msg->cursize );
 
     if ( rateMsec < client->snapshotMsec ) {
         rateMsec = client->snapshotMsec;
         client->rateDelayed = qfalse;
     } else {
+        // This flag is what tells the server to wait if the pipe is full
         client->rateDelayed = qtrue;
     }
 
-    // 3. THE FIX: If the player is in-game, skip the calculated delay.
-    // This forces the server to treat every frame as an opportunity to send.
-    if (client->state == CS_ACTIVE) {
-        client->nextSnapshotTime = svs.time; 
-    } else {
-        // Standard behavior for clients in loading screens or downloading
-        client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
-        
-        // Safety cap for connecting clients
+    // 3. Set the next time the server is ALLOWED to send a snapshot
+    // This removes the "Absolute Override" that was causing the ping spikes.
+    client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
+
+    // Safety cap for connecting clients (preventing download flooding)
+    if ( client->state != CS_ACTIVE ) {
         if ( !*client->downloadName && client->nextSnapshotTime < svs.time + 1000 ) {
             client->nextSnapshotTime = svs.time + 1000;
         }
@@ -881,25 +866,22 @@ void SV_SendClientMessages( void ) {
     int         i;
     client_t    *c;
 
-    // send a message to each connected client
     for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
-        if (!c->state) {
-            continue;        // not connected
+        if (!c->state) continue;
+
+        if ( svs.time < c->nextSnapshotTime ) continue;
+
+        // MB2/OpenJK Standard: If the pipe is full, don't build a new snap.
+        // Instead, send one fragment and calculate the wait time based on rate.
+        if ( c->netchan.unsentFragments ) {
+            c->nextSnapshotTime = svs.time + 
+                SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
+            
+            SV_Netchan_TransmitNextFragment( &c->netchan );
+            continue; // This 'continue' is what MB2 uses to prevent ping spikes
         }
 
-        if ( svs.time < c->nextSnapshotTime ) {
-            continue;        // not time yet
-        }
-
-        // THE FIX: Blast existing fragments to clear the pipe before the new snap.
-        // This ensures the new snapshot doesn't have to wait for the old one.
-        while (c->state && c->netchan.unsentFragments)
-        {
-            SV_Netchan_TransmitNextFragment(&c->netchan);
-        }
-
-        // generate and send a new message
-        // Since the pipe is now clear, this snapshot will send immediately.
+        // Only if the pipe is clear do we send a new snapshot
         SV_SendClientSnapshot( c );
     }
 }

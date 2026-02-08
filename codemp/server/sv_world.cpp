@@ -611,10 +611,13 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			continue;
 		}
 
-		if (DuelCull(SV_GentityNum(clip->passEntityNum), touch)) {
-			continue;
-		}		
+        // Fetch the player state once for this trace
+        playerState_t *ps = SV_GameClientNum(clip->passEntityNum);
 
+        // Pass the fetched 'ps' into DuelCull to keep physics checks fast
+        if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
+            continue;
+        }
 		// might intersect, so do an exact clip
 		clipHandle = SV_ClipHandleForEntity (touch);
 
