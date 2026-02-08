@@ -1,6 +1,14 @@
 # Network Performance & Safety Optimizations (Absolute Build)
 
-This document outlines the specific differences between the optimized "Absolute" networking stack and the stock OpenJK engine. These changes stabilize high-latency (200ms+) Player-to-Player combat and implement intelligent entity culling for high-population duel servers.
+This document outlines the specific differences between the optimized "Absolute" networking stack and the stock OpenJK engine. These changes are designed to stabilize high-latency (200ms+) Player-to-Player combat and implement intelligent entity culling for high-population duel servers.
+
+## 🟢 Why the Change? (2003 vs. 2026 Logic)
+The stock 2003 engine was built for a low-bandwidth era where the main goal was simply getting data through the pipe. In modern high-ping scenarios (215ms+), the primary enemy isn't just speed—it's **jitter and packet clumping**. 
+
+* **The Problem:** Stock logic is "passive." If the network is congested, snapshots often pile up and arrive at the client all at once, causing "teleporting" and "vibration" during close-quarters combat.
+* **The Solution:** This build transitions to "active" management. It enforces strict spacing between snapshots and caps physics processing to the server's native rhythm, ensuring that high-latency play feels like a smooth "glide" rather than a jagged stutter.
+
+---
 
 ## 1. Delta Compression & Snapshot Pacing
 **Function:** `SV_WriteSnapshotToClient` (sv_snapshot.cpp)
@@ -28,6 +36,7 @@ This document outlines the specific differences between the optimized "Absolute"
 
 * **Fragment Priority:** Replaces stock loops with a "Blast" mechanic. It aggressively clears existing fragments before building new snapshots to ensure the pipe is empty.
 * **Active Timing:** For clients in `CS_ACTIVE` state, the server skips calculated delays, treating every frame as a delivery opportunity once fragments are cleared.
+* **Delta Memory:** Refined `deltaMessage` logic ensures the server doesn't break the delta compression chain unless a true retransmit is required.
 
 **Impact:** Provides "Non-Blocking" performance. One laggy player can no longer cause "micro-stutters" for the rest of the server.
 
@@ -36,6 +45,7 @@ This document outlines the specific differences between the optimized "Absolute"
 
 * **Smoothing Cap:** Calculates `msec` between commands and caps it to the server's native rhythm (e.g., 25ms at 40fps).
 * **Jitter Absorption:** If packets arrive in a "bunch" due to latency spikes, the server processes them as smooth steps rather than one giant teleport.
+* **Delta Synchronization:** Ensures `cl->deltaMessage` is only reset to `-1` if the current state is invalid, preventing unnecessary full snapshots.
 
 **Impact:** Eliminates the "pull-back" effect. High-ping players (up to 260ms+) appear to move smoothly on the server rather than snapping in jagged bursts.
 
@@ -43,6 +53,7 @@ This document outlines the specific differences between the optimized "Absolute"
 **Function:** `SV_SendClientSnapshot` (sv_snapshot.cpp)
 
 * **Data Reduction:** If a message overflows, the server triggers an emergency pass. It re-initializes the message, prioritizes reliable commands, and forces a delta compression pass to fit essential data.
+* **Streamlined Commands:** Replaces stock string-copying loops with `MSG_WriteString` for more efficient gamedir signaling.
 
 **Impact:** Maintains synchronization even during extreme combat conditions, preventing the server from dropping critical movement frames.
 
