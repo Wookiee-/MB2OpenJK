@@ -1,74 +1,53 @@
 # Network Performance & Safety Optimizations (Absolute Build)
 
-This document outlines the specific differences between the optimized "Absolute" networking stack and the stock OpenJK/MB2 engine. These changes are designed to stabilize high-latency (200ms+) Player-to-Player combat and implement intelligent entity culling for high-population duel servers.
+This document outlines the specific differences between the optimized "Absolute" networking stack and the stock OpenJK/MB2 engine. These changes prioritize server-side performance and implement intelligent entity culling for high-population duel servers.
 
 ## 🟢 Why the Change? (2003 vs. 2026 Logic)
-The stock 2003 engine was built for a low-bandwidth era where the main goal was simply getting data through the pipe. In modern high-ping scenarios (215ms+), the primary enemy isn't just speed—it's **jitter and packet clumping**. 
+The stock 2003 engine was built for a low-bandwidth era where the main goal was simply getting data through the pipe. In modern high-population environments, the primary enemy is **CPU overhead** and **snapshot bloat**.
 
-* **The Problem:** Stock logic is "passive." If the network is congested, snapshots often pile up and arrive at the client all at once, causing "teleporting" and "vibration" during close-quarters combat.
-* **The Solution:** This build transitions to **"Active Pacing."** It enforces strict spacing between snapshots and caps physics processing to the server's native rhythm, ensuring that high-latency play feels like a smooth "glide" rather than a jagged stutter.
-
----
-
-## 1. Delta Compression & Snapshot Pacing
-**Function:** `SV_WriteSnapshotToClient` (`sv_snapshot.cpp`)
-
-| Optimization | Stock / MB2 Logic | Absolute Optimized Logic |
-| :--- | :--- | :--- |
-| **Congestion Management** | Basic rate tracking. | **Refined Pacing:** Flags `rateDelayed` to explicitly prevent snapshots from bunching together. |
-| **Delta Window** | Static reset thresholds. | **Stock Padding:** Uses `PACKET_BACKUP - 3` to maintain Delta mode during jitter. |
-| **Snap Flag Bit** | Standard flags. | Integrates `svs.snapFlagServerBit` for improved server-side state signaling. |
-
-**Impact:** Eliminates "Snapshot Clumping." By ensuring snapshots are correctly spaced according to the client's rate, it removes the "face-hugging" jitter seen at 200ms.
+* **The Problem:** Processing and sending entity data for every player on a full server to everyone else creates massive snapshot sizes and high CPU tax.
+* **The Solution:** This build transitions to **Isolation-Based networking**. It ensures that players in private duels only receive data relevant to their fight, while bystanders are ignored by the physics and networking trackers.
 
 ---
 
-## 2. Dedicated Server "Duel Isolation" (DuelCull)
+## 1. Dedicated Server "Duel Isolation" (DuelCull)
 **Function:** `SV_AddEntitiesVisibleFromPoint` & `DuelCull` (`duel_cull.cpp`)
 
-* **Pointer-Based Optimization:** Unlike stock logic which performs heavy lookups, the engine now passes the `playerState_t` pointer directly to `DuelCull`. This removes thousands of redundant table lookups per second.
-* **Performance Gate:** Implements a high-priority "Master Switch" (`sv_snapShotDuelCull`). If disabled, the function exits immediately, ensuring zero CPU overhead for non-duel servers.
-* **Entity Ghosting:** Automatically sets `state->solid = 0` for culled entities, reducing the CPU and network overhead for dueling players.
+* **Direct Pointer Passing:** Unlike stock logic which performs internal `GetPS` table lookups for every entity check, this engine passes the `playerState_t` pointer directly to the culling function. This removes thousands of redundant lookups per second in the snapshot loop.
+* **Performance Gate:** Implements a high-priority "Master Switch" (`sv_snapShotDuelCull`). If disabled, the isolation logic exits immediately in a single cycle to save CPU.
+* **Entity Ghosting:** Automatically sets `state->solid = 0` for culled entities. This reduces the complexity of physics traces and network overhead for dueling players.
 * **NPC Safety:** Explicitly excludes `ET_NPC` from culling to ensure training bots and dummies remain solid and visible for all players.
 
-**Impact:** Massively reduces CPU "tax" and snapshot size. Dueling players gain significant FPS and network stability by only processing data relevant to their combatant.
+**Impact:** Significantly reduces snapshot size and prevents "warping" in servers with high player counts by filtering data to only what is relevant to the combatants.
 
 ---
 
-## 3. Rate-Corrected Fragment Management
-**Functions:** `SV_SendMessageToClient` & `SV_SendClientMessages` (`sv_snapshot.cpp`)
+## 2. Fragment & Rate-Corrected Management
+**Functions:** `SV_SendMessageToClient`, `SV_SendClientMessages`, `SV_SendClientGameState`, and `SV_SendClientSnapshot` (`sv_snapshot.cpp` / `sv_client.cpp`)
 
-* **Restored Stock Rate Logic:** Removes aggressive "blast" overrides that caused ping spikes. It now correctly uses `SV_RateMsec` to calculate exactly how long the server must wait before sending again based on packet size.
-* **Fragment-Aware Pacing:** If the network pipe is full (`unsentFragments`), the server calculates the wait time for the next fragment based on the client's rate rather than skipping delays.
-* **Congestion Bypass:** If fragments are pending, the server avoids building new snapshots entirely, preventing the "clumping" effect that occurs when multiple snapshots are queued behind a large fragment.
+* **Removal of Fragment Loops:** The `while(client->netchan.unsentFragments)` loops have been removed from `SV_SendClientGameState` (sv_client.cpp) and `SV_SendClientSnapshot` (sv_snapshot.cpp). This prevents the engine from trying to force-clear fragments, which is the primary cause of "illegible server message" errors during initial snapshots.
+* **Restored Stock Rate Logic:** Re-establishes the stock `SV_RateMsec` calculation to determine wait times based on packet size, ensuring the pipe isn't flooded.
+* **Fragment-Aware Pacing:** If the network pipe is full (`unsentFragments`), the server calculates the wait time for the next fragment based on the client's rate and sends only that fragment.
+* **Congestion Bypass:** The server skips building a new snapshot entirely if the client has fragments pending. This ensures that snapshots do not "clump" together behind large data bursts.
 
 **Impact:** Provides "Smooth Delivery." The server heartbeat remains synchronized with the player's actual bandwidth, preventing the massive latency spikes caused by fragment flooding.
 
 ---
 
-## 4. Physics Heartbeat & UserMove Safety
-**Function:** `SV_UserMove` (`sv_client.cpp`)
-
-* **Time-Sync Safety:** Implements a strict `serverTime` check (`cmds[i].serverTime <= cl->lastUsercmd.serverTime`). This prevents the engine from re-processing duplicate or out-of-order packets—a common cause of "physics stutter".
-* **Clean Physics Timeline:** By discarding old commands (included when `cl_packetdup > 0`), the server ensures each movement step is processed exactly once.
-
-**Impact:** Eliminates "double-stepping" and micro-teleports. Even with high packet duplication, the server maintains a perfectly clean movement timeline for all players.
-
----
-
-## 5. Snapshot Overflow & Logging
+## 3. Snapshot Overflow & Logging
 **Function:** `SV_SendClientSnapshot` & `SV_LogPrintf` (`sv_snapshot.cpp` / `sv_main.cpp`)
 
-* **Emergency Recovery:** If a snapshot message overflows, the server triggers an emergency data reduction pass. It clears the message and re-sends only essential server commands and the delta-compressed snapshot.
-* **Engine-Side Logging:** Introduces `SV_LogPrintf`, a bridge function that allows the engine to write `DuelStart` and `DuelEnd` events directly to `games.log` with high-precision engine timestamps (`mins:secs`).
-* **Efficient Signaling:** Uses `MSG_WriteString` for gamedir signaling, replacing older manual byte-writing loops.
+* **Emergency Recovery:** If a snapshot message overflows, the server triggers an emergency data reduction pass. It clears the message and re-sends only essential server commands and the delta-compressed snapshot to maintain the connection.
+* **Engine-Side Logging:** Introduces `SV_LogPrintf`, a bridge function that allows the engine to write `DuelStart` and `DuelEnd` events directly to `games.log`.
+* **Precision Timestamps:** Logs use high-precision engine timestamps (`mins:secs`) to match the standard server log format.
+* **Efficient Signaling:** Replaces manual byte-writing loops with `MSG_WriteString` for more efficient gamedir signaling.
 
-**Impact:** Prevents "Connection Interrupted" errors during heavy combat and provides reliable, timestamped logging for tournament administration.
+**Impact:** Prevents "Connection Interrupted" errors during heavy combat and provides reliable, timestamped logging for tournament administration and anti-cheat review.
 
 ---
 
 ### Implementation Notes
-All optimizations have been verified for **OpenJK/MB2** compatibility. By leveraging direct pointer passing and enforcing strict time-syncing, the Absolute Build provides a stable, "stock-feel" experience optimized for 2026 network conditions.
+All optimizations have been verified for **OpenJK/MB2** compatibility. By leveraging direct pointer passing, removing risky fragment loops, and restoring stable pacing, the Absolute Build provides the most stable high-population experience for the idTech3 engine.
 
 # OpenJK
 
