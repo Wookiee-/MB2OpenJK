@@ -13,30 +13,6 @@ static qboolean isPlayer(sharedEntity_t *ent) {
 	return qfalse;
 }
 
-sharedEntity_t *flatten(sharedEntity_t *ent) {
-    if (ent->s.eType == ET_MISSILE) {
-        return SV_GentityNum(ent->r.ownerNum);
-    }
-
-    if (ent->s.eType >= ET_EVENTS) {
-        return ent; 
-    }
-
-    if (ent->s.eFlags & EF_PLAYER_EVENT) {
-        return ent; 
-    }
-
-    if ((ent->s.event & ~EV_EVENT_BITS) == EV_GRENADE_BOUNCE) {
-        return ent; 
-    }
-
-    return ent;
-}
-
-static playerState_t *GetPS(sharedEntity_t *ent) {
-	return SV_GameClientNum(ent->s.number);
-}
-
 // Helper to extract clean names
 static void GetPlayerName(int clientNum, char *outName, int maxSize) {
 	char configstring[MAX_CONFIGSTRINGS];
@@ -74,22 +50,27 @@ static void GetPlayerName(int clientNum, char *outName, int maxSize) {
 	}
 }
 
-int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
+int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
+    // --- 1. PERFORMANCE GATE ---
+    // If the feature is off, exit immediately to save CPU for all players.
+    if (!sv_snapShotDuelCull->integer) {
+        return 0;
+    }
+
     int entNum = ent->s.number;
 
-    // --- 1. LOGGING MODIFICATIONS (State-Locked) ---
-    if (entNum >= 0 && entNum < MAX_CLIENTS && isPlayer(ent)) {
-        playerState_t *ps = GetPS(ent);
-        qboolean isCurrentlyDueling = (ps && ps->duelInProgress) ? qtrue : qfalse;
+    // --- 2. LOGGING MODIFICATIONS (State-Locked) ---
+    // We use the 'ps' passed from the engine instead of calling GetPS(ent).
+    if (entNum >= 0 && entNum < MAX_CLIENTS && ps && isPlayer(ent)) {
+        qboolean isCurrentlyDueling = ps->duelInProgress ? qtrue : qfalse;
 
         // START TRIGGER: Log when the duel begins
         if (isCurrentlyDueling && !oldDuelState[entNum]) {
             int myOpponentIdx = ps->duelIndex; 
 
             if (myOpponentIdx >= 0 && myOpponentIdx < MAX_CLIENTS && myOpponentIdx != entNum) {
-                // THE HANDSHAKE: Get the player state of the opponent
-                sharedEntity_t *oppEnt = SV_GentityNum(myOpponentIdx);
-                playerState_t *oppPs = GetPS(oppEnt);
+                // Fetch opponent's state once using the index
+                playerState_t *oppPs = SV_GameClientNum(myOpponentIdx);
 
                 // RECIPROCITY CHECK: Ensure both are locked to each other
                 if (oppPs && oppPs->duelInProgress && oppPs->duelIndex == entNum) {
@@ -97,7 +78,7 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
                     oldDuelState[entNum] = qtrue;
                     duelOpponent[entNum] = myOpponentIdx;
 
-                    // ID FILTER: Only one side prints to avoid double-logging the pair
+                    // ID FILTER: Only one side prints to avoid double-logging
                     if (entNum < myOpponentIdx) {
                         char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
                         GetPlayerName(entNum, p1Name, sizeof(p1Name));
@@ -110,11 +91,9 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
         // END TRIGGER: Log when the duel ends
         else if (!isCurrentlyDueling && oldDuelState[entNum]) {
             // MB2 Loser is set to 1 HP. Winner is > 1.
-            if (ps && ps->stats[STAT_HEALTH] > 1) {
+            if (ps->stats[STAT_HEALTH] > 1) {
                 int loserIdx = duelOpponent[entNum];
                 
-                // We use the ID we "Locked" at the start, because the engine
-                // has likely already cleared ps->duelIndex by this frame.
                 if (loserIdx >= 0 && loserIdx < MAX_CLIENTS) {
                     char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
                     GetPlayerName(entNum, winnerName, sizeof(winnerName));
@@ -126,44 +105,40 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
 
             // UNLOCK: Reset trackers so they can duel again
             oldDuelState[entNum] = qfalse;
-            duelOpponent[entNum] = -1; // Use -1 to avoid accidental Player 0 triggers
+            duelOpponent[entNum] = -1; 
         }
     }
 
-    // --- 2. CULLING LOGIC (With NPC Fix) ---
-    if (!sv_snapShotDuelCull->integer)
-        return 0;
-
-    // 1. If it's not a person or NPC, treat as solid
+    // --- 3. TYPE & SAFETY CHECKS ---
+    // Ignore non-living entities (missiles, items, doors)
     if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
         return 0; 
     }
 
-    // 2. SAFETY: If the thing we are touching is an NPC, ALWAYS stay solid.
-    // This stops dummies from turning into ghosts when they are "dueling".
+    // NPCs are always solid (prevents ghosting training dummies)
     if (touch->s.eType == ET_NPC) {
         return 0; 
     }
 
-    playerState_t *ps = GetPS(ent);
     int touchNum = touch->s.number;
 
-    // 3. IF I AM DUELING: Ghost other players (bystanders)
+    // --- 4. CULLING LOGIC ---
+    // DUELIST LOGIC: If 'ps' shows a duel, ghost everyone except opponent
     if (ps && ps->duelInProgress) {
         if (ps->duelIndex != touchNum) {
-            return 2; 
+            return 2; // Ghost bystander
         }
-        return 0; 
+        return 0; // Solid opponent
     }
 
-    // 4. IF I AM A BYSTANDER: Ghost players who are dueling
-    // We only check for ET_PLAYER here so we don't ghost NPCs accidentally
+    // BYSTANDER LOGIC: Ghost players who are currently dueling
     if (touch->s.eType == ET_PLAYER) {
-        playerState_t *ops = GetPS(touch);
+        // We only perform the lookup for the OTHER player
+        playerState_t *ops = SV_GameClientNum(touchNum);
         if (ops && ops->duelInProgress) {
             return 2; 
         }
     }
 
     return 0;
-}   
+}

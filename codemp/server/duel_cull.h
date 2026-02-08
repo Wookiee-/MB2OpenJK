@@ -2,4 +2,4 @@
 
 #include "server.h"
 
-int DuelCull(sharedEntity_t *a, sharedEntity_t *b);
+int DuelCull(sharedEntity_t *a, sharedEntity_t *b, playerState_t *ps);
