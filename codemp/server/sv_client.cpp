@@ -486,6 +486,24 @@ void SV_SendClientGameState( client_t *client ) {
 
 	MSG_Init( &msg, msgBuffer, sizeof( msgBuffer ) );
 
+	// MW - my attempt to fix illegible server message errors caused by
+	// packet fragmentation of initial snapshot.
+	
+	int gameStateFrags = 0;
+    qboolean gameStateDone = qfalse;
+
+    while(!gameStateDone && client->netchan.unsentFragments)
+    {
+        SV_Netchan_TransmitNextFragment(&client->netchan);
+        gameStateFrags++;
+        if (gameStateFrags >= 64) {
+            gameStateDone = qtrue;
+        }
+    }
+    if (client->netchan.unsentFragments) {
+        client->nextSnapshotTime = svs.time + 10;
+    }
+
 	Com_DPrintf ("SV_SendClientGameState() for %s\n", client->name);
 	Com_DPrintf( "Going from CS_CONNECTED to CS_PRIMED for %s\n", client->name );
 	if ( client->state == CS_CONNECTED )
@@ -1469,7 +1487,12 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
 		if ( cmds[i].serverTime > cmds[cmdCount-1].serverTime ) {
 			continue;
 		}
-
+		// extremely lagged or cmd from before a map_restart
+		//if ( cmds[i].serverTime > svs.time + 3000 ) {
+		//	continue;
+		//}
+		// don't execute if this is an old cmd which is already executed
+		// these old cmds are included when cl_packetdup > 0
 		if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
 			continue;
 		}

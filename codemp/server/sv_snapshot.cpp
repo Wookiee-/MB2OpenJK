@@ -718,6 +718,25 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
     int         rateMsec;
 
+	// MW - my attempt to fix illegible server message errors caused by
+	// packet fragmentation of initial snapshot.
+
+	int gameStateFrags = 0;
+    qboolean gameStateDone = qfalse;
+
+    while(!gameStateDone && client->state && client->netchan.unsentFragments)
+    {
+        SV_Netchan_TransmitNextFragment(&client->netchan);
+        gameStateFrags++;
+        if (gameStateFrags >= 64) {
+            gameStateDone = qtrue;
+        }
+    }
+	
+    if (client->netchan.unsentFragments) {
+        client->nextSnapshotTime = svs.time + 10;
+    }
+
     // Record information about the message
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
     client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
@@ -798,6 +817,22 @@ void SV_SendClientSnapshot( client_t *client ) {
 
 		MSG_WriteString(&msg, FS_GetCurrentGameDir(true));
 
+		// MW - my attempt to fix illegible server message errors caused by
+		// packet fragmentation of initial snapshot.
+		//rww - reusing this code here
+
+		int gameStateFrags = 0;
+		qboolean gameStateDone = qfalse;
+
+		while(!gameStateDone && client->state && client->netchan.unsentFragments)
+		{
+			SV_Netchan_TransmitNextFragment(&client->netchan);
+			gameStateFrags++;
+			if (gameStateFrags >= 64) {
+				gameStateDone = qtrue;
+			}
+		}
+
 		// record information about the message
 		client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg.cursize;
 		client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
@@ -873,13 +908,21 @@ void SV_SendClientMessages( void ) {
 
         // MB2/OpenJK Standard: If the pipe is full, don't build a new snap.
         // Instead, send one fragment and calculate the wait time based on rate.
-        if ( c->netchan.unsentFragments ) {
-            c->nextSnapshotTime = svs.time + 
-                SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
-            
-            SV_Netchan_TransmitNextFragment( &c->netchan );
-            continue; // This 'continue' is what MB2 uses to prevent ping spikes
-        }
+		if ( c->netchan.unsentFragments ) {
+			c->nextSnapshotTime = svs.time + 
+				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
+			
+			// We use the same 'burst' logic here if you want max speed
+			int gameStateFrags = 0;
+			qboolean gameStateDone = qfalse;
+			
+			while(!gameStateDone && c->netchan.unsentFragments) {
+				SV_Netchan_TransmitNextFragment(&c->netchan);
+				gameStateFrags++;
+				if (gameStateFrags >= 64) gameStateDone = qtrue;
+			}
+			continue; 
+		}
 
         // Only if the pipe is clear do we send a new snapshot
         SV_SendClientSnapshot( c );
