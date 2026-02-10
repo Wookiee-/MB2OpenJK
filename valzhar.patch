@@ -1,0 +1,771 @@
+diff --git a/codemp/CMakeLists.txt b/codemp/CMakeLists.txt
+index 9be90c87..6be26991 100644
+--- a/codemp/CMakeLists.txt
++++ b/codemp/CMakeLists.txt
+@@ -335,6 +335,8 @@ if(BuildMPEngine OR BuildMPDed)
+ 		"${MPDir}/server/sv_world.cpp"
+ 		"${MPDir}/server/sv_gameapi.cpp"
+ 		"${MPDir}/server/sv_gameapi.h"
++		"${MPDir}/server/duel_cull.cpp"
++		"${MPDir}/server/duel_cull.h"		
+ 		)
+ 	source_group("server" FILES ${MPEngineAndDedServerFiles})
+ 	set(MPEngineAndDedFiles ${MPEngineAndDedFiles} ${MPEngineAndDedServerFiles})
+diff --git a/codemp/server/duel_cull.cpp b/codemp/server/duel_cull.cpp
+new file mode 100644
+index 00000000..e466bb39
+--- /dev/null
++++ b/codemp/server/duel_cull.cpp
+@@ -0,0 +1,144 @@
++#include "qcommon/qcommon.h"
++#include "duel_cull.h"
++#include "sv_gameapi.h"
++
++// Persistent state trackers
++static qboolean oldDuelState[MAX_CLIENTS] = { qfalse };
++static int      duelOpponent[MAX_CLIENTS] = { 0 };
++
++static qboolean isPlayer(sharedEntity_t *ent) {
++	if (ent->s.eType == ET_PLAYER)
++		return qtrue;
++
++	return qfalse;
++}
++
++// Helper to extract clean names
++static void GetPlayerName(int clientNum, char *outName, int maxSize) {
++	char configstring[MAX_CONFIGSTRINGS];
++	const char *value;
++
++	if (clientNum < 0 || clientNum >= MAX_CLIENTS) {
++		Q_strncpyz(outName, "Unknown", maxSize);
++		return;
++	}
++
++	// 1. Try to get the name from Configstrings (The standard way)
++	SV_GetConfigstring(CS_PLAYERS + clientNum, configstring, sizeof(configstring));
++	value = Info_ValueForKey(configstring, "n");
++
++	// 2. If configstring is empty or generic, check the engine's direct client record
++	// svs.clients is globally available via server.h
++	if (!value || !value[0]) {
++		client_t *cl = &svs.clients[clientNum];
++		if (cl && cl->name[0]) {
++			value = cl->name;
++		}
++	}
++
++	if (value && value[0]) {
++		char cleanName[MAX_NETNAME];
++		Q_strncpyz(cleanName, value, sizeof(cleanName));
++		
++		// 3. Strip color codes (e.g., ^1, ^7) for the log file
++		Q_CleanStr(cleanName); 
++		
++		Q_strncpyz(outName, cleanName, maxSize);
++	} else {
++		// Final fallback if absolutely no name is found
++		Com_sprintf(outName, maxSize, "Player %d", clientNum);
++	}
++}
++
++int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
++    // --- 1. PERFORMANCE GATE ---
++    // If the feature is off, exit immediately to save CPU for all players.
++    if (!sv_snapShotDuelCull->integer) {
++        return 0;
++    }
++
++    int entNum = ent->s.number;
++
++    // --- 2. LOGGING MODIFICATIONS (State-Locked) ---
++    // We use the 'ps' passed from the engine instead of calling GetPS(ent).
++    if (entNum >= 0 && entNum < MAX_CLIENTS && ps && isPlayer(ent)) {
++        qboolean isCurrentlyDueling = ps->duelInProgress ? qtrue : qfalse;
++
++        // START TRIGGER: Log when the duel begins
++        if (isCurrentlyDueling && !oldDuelState[entNum]) {
++            int myOpponentIdx = ps->duelIndex; 
++
++            if (myOpponentIdx >= 0 && myOpponentIdx < MAX_CLIENTS && myOpponentIdx != entNum) {
++                // Fetch opponent's state once using the index
++                playerState_t *oppPs = SV_GameClientNum(myOpponentIdx);
++
++                // RECIPROCITY CHECK: Ensure both are locked to each other
++                if (oppPs && oppPs->duelInProgress && oppPs->duelIndex == entNum) {
++                    // LOCK: This prevents any more "Start" logs until the duel ends
++                    oldDuelState[entNum] = qtrue;
++                    duelOpponent[entNum] = myOpponentIdx;
++
++                    // ID FILTER: Only one side prints to avoid double-logging
++                    if (entNum < myOpponentIdx) {
++                        char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
++                        GetPlayerName(entNum, p1Name, sizeof(p1Name));
++                        GetPlayerName(myOpponentIdx, p2Name, sizeof(p2Name));
++                        GVM_LogPrintf("DuelStart: %s challenged %s to a private duel\n", p1Name, p2Name);
++                    }
++                }
++            }
++        }
++        // END TRIGGER: Log when the duel ends
++        else if (!isCurrentlyDueling && oldDuelState[entNum]) {
++            // MB2 Loser is set to 1 HP. Winner is > 1.
++            if (ps->stats[STAT_HEALTH] > 1) {
++                int loserIdx = duelOpponent[entNum];
++                
++                if (loserIdx >= 0 && loserIdx < MAX_CLIENTS) {
++                    char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
++                    GetPlayerName(entNum, winnerName, sizeof(winnerName));
++                    GetPlayerName(loserIdx, loserName, sizeof(loserName));
++
++                    GVM_LogPrintf("DuelEnd: %s has defeated %s in a private duel\n", winnerName, loserName);
++                }
++            }
++
++            // UNLOCK: Reset trackers so they can duel again
++            oldDuelState[entNum] = qfalse;
++            duelOpponent[entNum] = -1; 
++        }
++    }
++
++    // --- 3. TYPE & SAFETY CHECKS ---
++    // Ignore non-living entities (missiles, items, doors)
++    if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
++        return 0; 
++    }
++
++    // NPCs are always solid (prevents ghosting training dummies)
++    if (touch->s.eType == ET_NPC) {
++        return 0; 
++    }
++
++    int touchNum = touch->s.number;
++
++    // --- 4. CULLING LOGIC ---
++    // DUELIST LOGIC: If 'ps' shows a duel, ghost everyone except opponent
++    if (ps && ps->duelInProgress) {
++        if (ps->duelIndex != touchNum) {
++            return 2; // Ghost bystander
++        }
++        return 0; // Solid opponent
++    }
++
++    // BYSTANDER LOGIC: Ghost players who are currently dueling
++    if (touch->s.eType == ET_PLAYER) {
++        // We only perform the lookup for the OTHER player
++        playerState_t *ops = SV_GameClientNum(touchNum);
++        if (ops && ops->duelInProgress) {
++            return 2; 
++        }
++    }
++
++    return 0;
++}
+\ No newline at end of file
+diff --git a/codemp/server/duel_cull.h b/codemp/server/duel_cull.h
+new file mode 100644
+index 00000000..4fcde51a
+--- /dev/null
++++ b/codemp/server/duel_cull.h
+@@ -0,0 +1,5 @@
++#pragma once
++
++#include "server.h"
++
++int DuelCull(sharedEntity_t *a, sharedEntity_t *b, playerState_t *ps);
+\ No newline at end of file
+diff --git a/codemp/server/server.h b/codemp/server/server.h
+index 6a14f7d7..6b124065 100644
+--- a/codemp/server/server.h
++++ b/codemp/server/server.h
+@@ -28,6 +28,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ #include "game/g_public.h"
+ #include "game/bg_public.h"
+ #include "rd-common/tr_public.h"
++#include "server/duel_cull.h"
++
++extern int DuelCull(sharedEntity_t *a, sharedEntity_t *b, playerState_t *ps);
+ 
+ //=============================================================================
+ 
+@@ -46,6 +49,7 @@ typedef struct svEntity_s {
+ 	int			lastCluster;		// if all the clusters don't fit in clusternums
+ 	int			areanum, areanum2;
+ 	int			snapshotCounter;	// used to prevent double adding from portal views
++	int 		snapshotTime;
+ } svEntity_t;
+ 
+ typedef enum {
+@@ -190,6 +194,10 @@ typedef struct client_s {
+ 	qboolean		csUpdated[MAX_CONFIGSTRINGS];
+ 
+ 	demoInfo_t		demo;
++#ifdef DEDICATED
++	qboolean		disableDuelCull;
++#endif
++
+ } client_t;
+ 
+ //=============================================================================
+@@ -276,6 +284,7 @@ extern	cvar_t	*sv_banFile;
+ extern	cvar_t	*sv_maxOOBRate;
+ extern	cvar_t	*sv_maxOOBRateIP;
+ extern	cvar_t	*sv_autoWhitelist;
++extern	cvar_t	*sv_snapShotDuelCull;
+ 
+ extern	serverBan_t serverBans[SERVER_MAXBANS];
+ extern	int serverBansCount;
+@@ -308,7 +317,7 @@ void SV_RemoveOperatorCommands (void);
+ void SV_MasterHeartbeat (void);
+ void SV_MasterShutdown (void);
+ 
+-
++void SV_LogPrintf( const char *fmt, ... );
+ 
+ 
+ //
+diff --git a/codemp/server/sv_client.cpp b/codemp/server/sv_client.cpp
+index 073fbbe6..8a2b97f0 100644
+--- a/codemp/server/sv_client.cpp
++++ b/codemp/server/sv_client.cpp
+@@ -488,14 +488,21 @@ void SV_SendClientGameState( client_t *client ) {
+ 
+ 	// MW - my attempt to fix illegible server message errors caused by
+ 	// packet fragmentation of initial snapshot.
+-	while(client->state&&client->netchan.unsentFragments)
+-	{
+-		// send additional message fragments if the last message
+-		// was too large to send at once
+-
+-		Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
+-		SV_Netchan_TransmitNextFragment(&client->netchan);
+-	}
++	
++	int gameStateFrags = 0;
++    qboolean gameStateDone = qfalse;
++
++    while(!gameStateDone && client->netchan.unsentFragments)
++    {
++        SV_Netchan_TransmitNextFragment(&client->netchan);
++        gameStateFrags++;
++        if (gameStateFrags >= 64) {
++            gameStateDone = qtrue;
++        }
++    }
++    if (client->netchan.unsentFragments) {
++        client->nextSnapshotTime = svs.time + 10;
++    }
+ 
+ 	Com_DPrintf ("SV_SendClientGameState() for %s\n", client->name);
+ 	Com_DPrintf( "Going from CS_CONNECTED to CS_PRIMED for %s\n", client->name );
+@@ -1489,8 +1496,9 @@ static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
+ 		if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
+ 			continue;
+ 		}
++
+ 		SV_ClientThink (cl, &cmds[ i ]);
+-	}
++    }
+ }
+ 
+ 
+diff --git a/codemp/server/sv_gameapi.cpp b/codemp/server/sv_gameapi.cpp
+index d216669a..32703671 100644
+--- a/codemp/server/sv_gameapi.cpp
++++ b/codemp/server/sv_gameapi.cpp
+@@ -3158,3 +3158,14 @@ void SV_RestartGame( void ) {
+ 
+ 	SV_InitGame( qtrue );
+ }
++
++
++void GVM_LogPrintf( const char *fmt, ... ) {
++	va_list argptr;
++	char text[1024];
++	va_start(argptr, fmt);
++	Q_vsnprintf(text, sizeof(text), fmt, argptr);
++	va_end(argptr);
++
++	SV_LogPrintf("%s", text);
++}
+\ No newline at end of file
+diff --git a/codemp/server/sv_gameapi.h b/codemp/server/sv_gameapi.h
+index ea651e5b..a37c9fa3 100644
+--- a/codemp/server/sv_gameapi.h
++++ b/codemp/server/sv_gameapi.h
+@@ -60,6 +60,7 @@ qboolean	GVM_NAV_EntIsBreakable				( int entityNum );
+ qboolean	GVM_NAV_EntIsRemovableUsable		( int entNum );
+ void		GVM_NAV_FindCombatPointWaypoints	( void );
+ int			GVM_BG_GetItemIndexByTag			( int tag, int type );
++void 		GVM_LogPrintf						( const char *fmt, ... );
+ 
+ void SV_BindGame( void );
+ void SV_UnbindGame( void );
+diff --git a/codemp/server/sv_init.cpp b/codemp/server/sv_init.cpp
+index 2d4f3d84..7f237ce4 100644
+--- a/codemp/server/sv_init.cpp
++++ b/codemp/server/sv_init.cpp
+@@ -1013,6 +1013,8 @@ void SV_Init (void) {
+ 	sv_maxOOBRate = Cvar_Get("sv_maxOOBRate", "1000", CVAR_ARCHIVE, "Maximum rate of handling incoming server commands" );
+ 	sv_maxOOBRateIP = Cvar_Get("sv_maxOOBRateIP", "1", CVAR_ARCHIVE, "Maximum rate of handling incoming server commands per IP address" );
+ 	sv_autoWhitelist = Cvar_Get("sv_autoWhitelist", "1", CVAR_ARCHIVE, "Save player IPs to allow them using server during DOS attack" );
++	
++	sv_snapShotDuelCull = Cvar_Get("sv_snapShotDuelCull", "1", CVAR_NONE, "Snapshot-based duel isolation");	
+ 
+ 	// initialize bot cvars so they are listed and can be set before loading the botlib
+ 	SV_BotInitCvars();
+diff --git a/codemp/server/sv_main.cpp b/codemp/server/sv_main.cpp
+index 1bb2f7da..2fc5527a 100644
+--- a/codemp/server/sv_main.cpp
++++ b/codemp/server/sv_main.cpp
+@@ -21,7 +21,8 @@ You should have received a copy of the GNU General Public License
+ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ ===========================================================================
+ */
+-
++#include <stdio.h>
++#include <time.h>
+ #include "server.h"
+ 
+ #include "ghoul2/ghoul2_shared.h"
+@@ -72,6 +73,7 @@ cvar_t	*sv_banFile;
+ cvar_t	*sv_maxOOBRate;
+ cvar_t	*sv_maxOOBRateIP;
+ cvar_t	*sv_autoWhitelist;
++cvar_t	*sv_snapShotDuelCull;
+ 
+ serverBan_t serverBans[SERVER_MAXBANS];
+ int serverBansCount = 0;
+@@ -1251,5 +1253,59 @@ void SV_Frame( int msec ) {
+ 	SV_MasterHeartbeat();
+ }
+ 
++/*
++==================
++SV_LogPrintf
++
++New bridge function to write directly to games.log from the engine side.
++==================
++*/
++
++void SV_LogPrintf( const char *fmt, ... ) {
++    va_list     argptr;
++    static char text[1024];
++    static char timestampedText[1150];
++    const char  *logName;
++    
++    // 1. Calculate Engine Time (Matches the 3:09 format)
++    int seconds = svs.time / 1000;
++    int mins = seconds / 60;
++    int secs = seconds % 60;
++
++    va_start (argptr, fmt);
++    Q_vsnprintf (text, sizeof(text), fmt, argptr);
++    va_end (argptr);
++
++    if ( !text[0] ) return;
++
++    // 2. Format with exact engine spacing
++    Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", mins, secs, text);
++
++    // 3. Output to Console
++    Com_Printf( "%s", timestampedText );
++
++    logName = Cvar_VariableString( "g_log" ); // This should be "duel-games.log"
++    if ( !logName || !logName[0] ) return;
++
++    // --- DIRECT FILE WRITING (Reliable for Linux & Windows) ---
++    char fullPath[MAX_OSPATH];
++    const char *homePath = Cvar_VariableString("fs_homepath");
++
++    if (homePath && homePath[0]) {
++        // Construct the path manually to avoid Engine VFS issues
++        // This will result in: /home/mbiiez/openjk/MBII/duel-games.log
++        Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
++        
++        FILE *f = fopen(fullPath, "a");
++        if (f) {
++            fprintf(f, "%s", timestampedText);
++            fflush(f); 
++            fclose(f);
++        } else {
++            // If it fails, print a warning to the server console so you know why
++            Com_Printf("ERROR: Could not write to log file at %s\n", fullPath);
++        }
++    }
++}
+ //============================================================================
+ 
+diff --git a/codemp/server/sv_snapshot.cpp b/codemp/server/sv_snapshot.cpp
+index b8515bf3..1bdd6e0e 100644
+--- a/codemp/server/sv_snapshot.cpp
++++ b/codemp/server/sv_snapshot.cpp
+@@ -137,7 +137,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
+ 		client->deltaMessage = client->netchan.outgoingSequence;
+ 	}
+ 
+-	// try to use a previous frame as the source for delta compressing the snapshot
++		// try to use a previous frame as the source for delta compressing the snapshot
+ 	if ( deltaMessage <= 0 || client->state != CS_ACTIVE ) {
+ 		// client is asking for a retransmit
+ 		oldframe = NULL;
+@@ -204,6 +204,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
+ 	MSG_WriteByte (msg, lastframe);
+ 
+ 	snapFlags = svs.snapFlagServerBit;
++
+ 	if ( client->rateDelayed ) {
+ 		snapFlags |= SNAPFLAG_RATE_DELAYED;
+ 	}
+@@ -360,9 +361,14 @@ static void SV_AddEntToSnapshot( svEntity_t *svEnt, sharedEntity_t *gEnt, snapsh
+ SV_AddEntitiesVisibleFromPoint
+ ===============
+ */
+-float g_svCullDist = -1.0f;
++float g_svCullDist = 4096.0f;
+ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *frame,
+-									snapshotEntityNumbers_t *eNums, qboolean portal ) {
++#ifndef DEDICATED
++									snapshotEntityNumbers_t *eNums, qboolean portal )
++#else
++									snapshotEntityNumbers_t *eNums, qboolean portal, qboolean skipDuelCull )
++#endif
++{
+ 	int		e, i;
+ 	sharedEntity_t *ent;
+ 	svEntity_t	*svEnt;
+@@ -425,7 +431,11 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
+ 				continue;
+ 			}
+ 		}
+-
++#ifdef DEDICATED
++		if (!skipDuelCull && DuelCull(SV_GentityNum(frame->ps.clientNum), ent, &frame->ps) == 1) {
++			continue;
++		}
++#endif
+ 		svEnt = SV_SvEntityForGentity( ent );
+ 
+ 		// don't double add an entity through portals
+@@ -522,7 +532,11 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
+ 					continue;
+ 				}
+ 			}
++#ifndef DEDICATED
+ 			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue );
++#else
++			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue, skipDuelCull);
++#endif
+ 		}
+ 	}
+ }
+@@ -609,7 +623,12 @@ static void SV_BuildClientSnapshot( client_t *client ) {
+ 
+ 	// add all the entities directly visible to the eye, which
+ 	// may include portal entities that merge other viewpoints
++
++#ifndef DEDICATED
+ 	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
++#else
++	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse, client->disableDuelCull );
++#endif
+ 
+ 	// if there were portals visible, there may be out of order entities
+ 	// in the list which will need to be resorted for the delta compression
+@@ -631,6 +650,12 @@ static void SV_BuildClientSnapshot( client_t *client ) {
+ 		ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
+ 		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
+ 		*state = ent->s;
++		
++#ifdef DEDICATED
++		if (DuelCull(client->gentity, ent, ps)) {
++			state->solid = 0;
++		}
++#endif		
+ 		svs.nextSnapshotEntities++;
+ 		// this should never hit, map should always be restarted first in SV_Frame
+ 		if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
+@@ -658,6 +683,7 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
+ 	if ( messageSize > 1500 ) {
+ 		messageSize = 1500;
+ 	}
++	
+ 	rate = client->rate;
+ 	if ( sv_maxRate->integer ) {
+ 		if ( sv_maxRate->integer < 1000 ) {
+@@ -690,73 +716,79 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
+ =======================
+ */
+ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
+-	int			rateMsec;
++    int         rateMsec;
+ 
+ 	// MW - my attempt to fix illegible server message errors caused by
+ 	// packet fragmentation of initial snapshot.
+-	while(client->state&&client->netchan.unsentFragments)
+-	{
+-		// send additional message fragments if the last message
+-		// was too large to send at once
+-		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+-		SV_Netchan_TransmitNextFragment(&client->netchan);
+-	}
+-
+-	// record information about the message
+-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
+-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
+-	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = -1;
+-
+-	// save the message to demo.  this must happen before sending over network as that encodes the backing databuf
+-	if ( client->demo.demorecording && !client->demo.demowaiting ) {
+-		msg_t msgcopy = *msg;
+-		MSG_WriteByte( &msgcopy, svc_EOF );
+-		SV_WriteDemoMessage( client, &msgcopy, 0 );
+-	}
+ 
+-	// bots need to have their snapshots built, but
+-	// they query them directly without needing to be sent
+-	if ( client->demo.isBot ) {
+-		client->netchan.outgoingSequence++;
+-		client->demo.botReliableAcknowledge = client->reliableSent;
+-		return;
+-	}
+-
+-	// send the datagram
+-	SV_Netchan_Transmit( client, msg );	//msg->cursize, msg->data );
+-
+-	// set nextSnapshotTime based on rate and requested number of updates
+-
+-	// local clients get snapshots every server frame
+-	// TTimo - https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=491
+-	// added sv_lanForceRate check
+-	if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
+-		client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
+-		return;
+-	}
+-
+-	// normal rate / snapshotMsec calculation
+-	rateMsec = SV_RateMsec( client, msg->cursize );
+-
+-	if ( rateMsec < client->snapshotMsec ) {
+-		// never send more packets than this, no matter what the rate is at
+-		rateMsec = client->snapshotMsec;
+-		client->rateDelayed = qfalse;
+-	} else {
+-		client->rateDelayed = qtrue;
+-	}
+-
+-	client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
+-
+-	// don't pile up empty snapshots while connecting
+-	if ( client->state != CS_ACTIVE ) {
+-		// a gigantic connection message may have already put the nextSnapshotTime
+-		// more than a second away, so don't shorten it
+-		// do shorten if client is downloading
+-		if ( !*client->downloadName && client->nextSnapshotTime < svs.time + ((int) (1000.0 * com_timescale->value)) ) {
+-			client->nextSnapshotTime = svs.time + ((int) (1000 * com_timescale->value));
+-		}
+-	}
++	int gameStateFrags = 0;
++    qboolean gameStateDone = qfalse;
++
++    while(!gameStateDone && client->state && client->netchan.unsentFragments)
++    {
++        SV_Netchan_TransmitNextFragment(&client->netchan);
++        gameStateFrags++;
++        if (gameStateFrags >= 64) {
++            gameStateDone = qtrue;
++        }
++    }
++	
++    if (client->netchan.unsentFragments) {
++        client->nextSnapshotTime = svs.time + 10;
++    }
++
++    // Record information about the message
++    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
++    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
++    client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageAcked = -1;
++
++    // Save the message to demo
++    if ( client->demo.demorecording && !client->demo.demowaiting ) {
++        msg_t msgcopy = *msg;
++        MSG_WriteByte( &msgcopy, svc_EOF );
++        SV_WriteDemoMessage( client, &msgcopy, 0 );
++    }
++
++    // Bots logic
++    if ( client->demo.isBot ) {
++        client->netchan.outgoingSequence++;
++        client->demo.botReliableAcknowledge = client->reliableSent;
++        return;
++    }
++
++    // Send the datagram
++    SV_Netchan_Transmit( client, msg );
++
++    // --- RESTORED STOCK RATE LOGIC ---
++
++    // 1. LAN / Loopback logic
++    if ( client->netchan.remoteAddress.type == NA_LOOPBACK || (sv_lanForceRate->integer && Sys_IsLANAddress (client->netchan.remoteAddress)) ) {
++        client->nextSnapshotTime = svs.time + ((int) (1000.0 / sv_fps->integer * com_timescale->value));
++        return;
++    }
++
++    // 2. Standard Rate calculation
++    // This calculates how long we MUST wait before sending again based on packet size
++    rateMsec = SV_RateMsec( client, msg->cursize );
++
++    if ( rateMsec < client->snapshotMsec ) {
++        rateMsec = client->snapshotMsec;
++        client->rateDelayed = qfalse;
++    } else {
++        // This flag is what tells the server to wait if the pipe is full
++        client->rateDelayed = qtrue;
++    }
++
++    // 3. Set the next time the server is ALLOWED to send a snapshot
++    // This removes the "Absolute Override" that was causing the ping spikes.
++    client->nextSnapshotTime = svs.time + ((int) (rateMsec * com_timescale->value));
++
++    // Safety cap for connecting clients (preventing download flooding)
++    if ( client->state != CS_ACTIVE ) {
++        if ( !*client->downloadName && client->nextSnapshotTime < svs.time + 1000 ) {
++            client->nextSnapshotTime = svs.time + 1000;
++        }
++    }
+ }
+ 
+ 
+@@ -775,7 +807,6 @@ void SV_SendClientSnapshot( client_t *client ) {
+ 
+ 	if (!client->sentGamedir)
+ 	{ //rww - if this is the case then make sure there is an svc_setgame sent before this snap
+-		int i = 0;
+ 
+ 		MSG_Init (&msg, msg_buf, sizeof(msg_buf));
+ 
+@@ -784,24 +815,22 @@ void SV_SendClientSnapshot( client_t *client ) {
+ 
+ 		MSG_WriteByte (&msg, svc_setgame);
+ 
+-		const char *gamedir = FS_GetCurrentGameDir(true);
+-
+-		while (gamedir[i])
+-		{
+-			MSG_WriteByte(&msg, gamedir[i]);
+-			i++;
+-		}
+-		MSG_WriteByte(&msg, 0);
++		MSG_WriteString(&msg, FS_GetCurrentGameDir(true));
+ 
+ 		// MW - my attempt to fix illegible server message errors caused by
+ 		// packet fragmentation of initial snapshot.
+ 		//rww - reusing this code here
+-		while(client->state&&client->netchan.unsentFragments)
++
++		int gameStateFrags = 0;
++		qboolean gameStateDone = qfalse;
++
++		while(!gameStateDone && client->state && client->netchan.unsentFragments)
+ 		{
+-			// send additional message fragments if the last message
+-			// was too large to send at once
+-			Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+ 			SV_Netchan_TransmitNextFragment(&client->netchan);
++			gameStateFrags++;
++			if (gameStateFrags >= 64) {
++				gameStateDone = qtrue;
++			}
+ 		}
+ 
+ 		// record information about the message
+@@ -849,9 +878,15 @@ void SV_SendClientSnapshot( client_t *client ) {
+ 
+ 	// check for overflow
+ 	if ( msg.overflowed ) {
+-		Com_Printf ("WARNING: msg overflowed for %s\n", client->name);
+-		MSG_Clear (&msg);
+-	}
++        Com_Printf ("WARNING: msg overflowed for %s - Reducing Data...\n", client->name);
++        MSG_Clear (&msg);
++
++        MSG_Init (&msg, msg_buf, sizeof(msg_buf));
++        MSG_WriteLong( &msg, client->lastClientCommand );
++        SV_UpdateServerCommandsToClient( client, &msg );
++
++        SV_WriteSnapshotToClient( client, &msg );
++    }
+ 
+ 	SV_SendMessageToClient( &msg, client );
+ }
+@@ -863,30 +898,33 @@ SV_SendClientMessages
+ =======================
+ */
+ void SV_SendClientMessages( void ) {
+-	int			i;
+-	client_t	*c;
++    int         i;
++    client_t    *c;
+ 
+-	// send a message to each connected client
+-	for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
+-		if (!c->state) {
+-			continue;		// not connected
+-		}
++    for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
++        if (!c->state) continue;
+ 
+-		if ( svs.time < c->nextSnapshotTime ) {
+-			continue;		// not time yet
+-		}
++        if ( svs.time < c->nextSnapshotTime ) continue;
+ 
+-		// send additional message fragments if the last message
+-		// was too large to send at once
++        // MB2/OpenJK Standard: If the pipe is full, don't build a new snap.
++        // Instead, send one fragment and calculate the wait time based on rate.
+ 		if ( c->netchan.unsentFragments ) {
+-			c->nextSnapshotTime = svs.time +
++			c->nextSnapshotTime = svs.time + 
+ 				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
+-			SV_Netchan_TransmitNextFragment( &c->netchan );
+-			continue;
++			
++			// We use the same 'burst' logic here if you want max speed
++			int gameStateFrags = 0;
++			qboolean gameStateDone = qfalse;
++			
++			while(!gameStateDone && c->netchan.unsentFragments) {
++				SV_Netchan_TransmitNextFragment(&c->netchan);
++				gameStateFrags++;
++				if (gameStateFrags >= 64) gameStateDone = qtrue;
++			}
++			continue; 
+ 		}
+ 
+-		// generate and send a new message
+-		SV_SendClientSnapshot( c );
+-	}
++        // Only if the pipe is clear do we send a new snapshot
++        SV_SendClientSnapshot( c );
++    }
+ }
+-
+diff --git a/codemp/server/sv_world.cpp b/codemp/server/sv_world.cpp
+index 309f7211..6e34662d 100644
+--- a/codemp/server/sv_world.cpp
++++ b/codemp/server/sv_world.cpp
+@@ -611,6 +611,13 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
+ 			continue;
+ 		}
+ 
++        // Fetch the player state once for this trace
++        playerState_t *ps = SV_GameClientNum(clip->passEntityNum);
++
++        // Pass the fetched 'ps' into DuelCull to keep physics checks fast
++        if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
++            continue;
++        }
+ 		// might intersect, so do an exact clip
+ 		clipHandle = SV_ClipHandleForEntity (touch);
+ 

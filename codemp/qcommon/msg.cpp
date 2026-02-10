@@ -1102,13 +1102,13 @@ void MSG_WriteDeltaEntity( msg_t *msg, struct entityState_s *from, struct entity
 	oldsize += numFields;
 
 	for ( i = 0, field = entityStateFields ; i < lc ; i++, field++ ) {
-		fromF = (int *)( (byte *)from + field->offset );
-		toF = (int *)( (byte *)to + field->offset );
+        fromF = (int *)( (byte *)from + field->offset );
+        toF = (int *)( (byte *)to + field->offset );
 
-		if ( *fromF == *toF ) {
-			MSG_WriteBits( msg, 0, 1 );	// no change
-			continue;
-		}
+        if ( *fromF == *toF ) {
+            MSG_WriteBits( msg, 0, 1 ); // no change
+            continue;
+        }
 
 		MSG_WriteBits( msg, 1, 1 );	// changed
 
