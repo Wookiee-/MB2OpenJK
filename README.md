@@ -25,10 +25,10 @@ The stock 2003 engine was built for a low-bandwidth era where the main goal was 
 ## 2. Fragment & Rate-Corrected Management
 **Functions:** `SV_SendMessageToClient`, `SV_SendClientMessages`, `SV_SendClientGameState`, and `SV_SendClientSnapshot` (`sv_snapshot.cpp` / `sv_client.cpp`)
 
-* **Removal of Fragment Loops:** The `while(client->netchan.unsentFragments)` loops have been removed from `SV_SendClientGameState` (sv_client.cpp) and `SV_SendClientSnapshot` (sv_snapshot.cpp). This prevents the engine from trying to force-clear fragments, which is the primary cause of "illegible server message" errors during initial snapshots.
-* **Restored Stock Rate Logic:** Re-establishes the stock `SV_RateMsec` calculation to determine wait times based on packet size, ensuring the pipe isn't flooded.
-* **Fragment-Aware Pacing:** If the network pipe is full (`unsentFragments`), the server calculates the wait time for the next fragment based on the client's rate and sends only that fragment.
-* **Congestion Bypass:** The server skips building a new snapshot entirely if the client has fragments pending. This ensures that snapshots do not "clump" together behind large data bursts.
+* **Standardized Burst Limit:** Implements a global `MAX_RELIABLE_BURST` of 128 fragments, providing a "cushion" for large data spikes like map joins.
+* **Per-Player Safety Bars:** Every client now has a dedicated `burstCount` increment within transmission loops, ensuring one player's data backlog cannot "starve" the rest of the server.
+* **ISM Crash Prevention:** By allowing up to 128 fragments per frame with proper increment logic, the "Illegible Server Message" error is eliminated during initial snapshots.
+* **Congestion Bypass:** The server skips building a new snapshot entirely if the client has fragments pending, preventing snapshots from "clumping" and causing jitter.
 
 **Impact:** Provides "Smooth Delivery." The server heartbeat remains synchronized with the player's actual bandwidth, preventing the massive latency spikes caused by fragment flooding.
 
@@ -37,18 +37,16 @@ The stock 2003 engine was built for a low-bandwidth era where the main goal was 
 ## 3. Snapshot Overflow & Logging
 **Function:** `SV_SendClientSnapshot` & `SV_LogPrintf` (`sv_snapshot.cpp` / `sv_main.cpp`)
 
-* **Emergency Recovery:** If a snapshot message overflows, the server triggers an emergency data reduction pass. It clears the message and re-sends only essential server commands and the delta-compressed snapshot to maintain the connection.
 * **Engine-Side Logging:** Introduces `SV_LogPrintf`, a bridge function that allows the engine to write `DuelStart` and `DuelEnd` events directly to `games.log`.
 * **Precision Timestamps:** Logs use high-precision engine timestamps (`mins:secs`) to match the standard server log format.
-* **Efficient Signaling:** Replaces manual byte-writing loops with `MSG_WriteString` for more efficient gamedir signaling.
+* **Reliable I/O:** Uses direct file writing with `fflush` to ensure logs are recorded even during server crashes.
 
 **Impact:** Prevents "Connection Interrupted" errors during heavy combat and provides reliable, timestamped logging for tournament administration and anti-cheat review.
 
 ---
 
 ### Implementation Notes
-All optimizations have been verified for **OpenJK/MB2** compatibility. By leveraging direct pointer passing, removing risky fragment loops, and restoring stable pacing, the Absolute Build provides the most stable high-population experience for the idTech3 engine.
-
+All optimizations have been verified for **OpenJK/MB2** compatibility. By leveraging direct pointer passing, fixing fragment increment bugs, and restoring stable pacing, the Absolute Build provides the most stable high-population experience for the idTech3 engine.
 # OpenJK
 
 OpenJK is an effort by the JACoders group to maintain and improve the game engines on which the Jedi Academy (JA) and Jedi Outcast (JO) games run on, while maintaining *full backwards compatibility* with the existing games. *This project does not attempt to rebalance or otherwise modify core gameplay*.
