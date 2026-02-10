@@ -483,26 +483,21 @@ the wrong gamestate.
 void SV_SendClientGameState( client_t *client ) {
 	msg_t		msg;
 	byte		msgBuffer[MAX_MSGLEN];
+	int 		burstCount = 0;
 
 	MSG_Init( &msg, msgBuffer, sizeof( msgBuffer ) );
 
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
-	
-	int gameStateFrags = 0;
-    qboolean gameStateDone = qfalse;
+	while(client->state&&client->netchan.unsentFragments && burstCount < MAX_RELIABLE_BURST)
+	{
+		// send additional message fragments if the last message
+		// was too large to send at once
 
-    while(!gameStateDone && client->netchan.unsentFragments)
-    {
-        SV_Netchan_TransmitNextFragment(&client->netchan);
-        gameStateFrags++;
-        if (gameStateFrags >= 64) {
-            gameStateDone = qtrue;
-        }
-    }
-    if (client->netchan.unsentFragments) {
-        client->nextSnapshotTime = svs.time + 10;
-    }
+		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
+		SV_Netchan_TransmitNextFragment(&client->netchan);
+		burstCount++;
+	}
 
 	Com_DPrintf ("SV_SendClientGameState() for %s\n", client->name);
 	Com_DPrintf( "Going from CS_CONNECTED to CS_PRIMED for %s\n", client->name );
