@@ -77,6 +77,7 @@ cvar_t	*sv_snapShotDuelCull;
 
 serverBan_t serverBans[SERVER_MAXBANS];
 int serverBansCount = 0;
+int totalFrameFragments = 0;
 
 /*
 =============================================================================
@@ -1147,6 +1148,8 @@ happen before SV_Frame is called
 void SV_Frame( int msec ) {
 	int		frameMsec;
 	int		startTime;
+
+	totalFrameFragments = 0;
 
 	// the menu kills the server with this cvar
 	if ( sv_killserver->integer ) {

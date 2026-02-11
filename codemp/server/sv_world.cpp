@@ -547,6 +547,9 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 
 	num = SV_AreaEntities( clip->boxmins, clip->boxmaxs, touchlist, MAX_GENTITIES);
 
+	// Fetch the player state once for this trace
+    playerState_t *ps = (clip->passEntityNum >= 0 && clip->passEntityNum < MAX_CLIENTS) ? SV_GameClientNum(clip->passEntityNum) : NULL;
+
 	if ( clip->passEntityNum != ENTITYNUM_NONE ) {
 		passOwnerNum = ( SV_GentityNum( clip->passEntityNum ) )->r.ownerNum;
 		if ( passOwnerNum == ENTITYNUM_NONE ) {
@@ -566,6 +569,16 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			return;
 		}
 		touch = SV_GentityNum( touchlist[i] );
+
+
+		if ( !touch->r.contents && !touch->r.bmodel ) {
+			continue;
+		}
+
+		// Pass the fetched 'ps' into DuelCull to keep physics checks fast
+		if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
+			continue;
+		}
 
 		// see if we should ignore this entity
 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
@@ -611,13 +624,6 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			continue;
 		}
 
-        // Fetch the player state once for this trace
-        playerState_t *ps = SV_GameClientNum(clip->passEntityNum);
-
-        // Pass the fetched 'ps' into DuelCull to keep physics checks fast
-        if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
-            continue;
-        }
 		// might intersect, so do an exact clip
 		clipHandle = SV_ClipHandleForEntity (touch);
 

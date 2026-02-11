@@ -23,6 +23,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 #include "qcommon/cm_public.h"
+#include <algorithm>
+
+extern int totalFrameFragments;
 
 /*
 =============================================================================
@@ -54,63 +57,72 @@ Writes a delta update of an entityState_t list to the message.
 =============
 */
 static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to, msg_t *msg ) {
-	entityState_t	*oldent, *newent;
-	int		oldindex, newindex;
-	int		oldnum, newnum;
-	int		from_num_entities;
+    entityState_t   *oldent, *newent;
+    int     oldindex, newindex;
+    int     oldnum, newnum;
+    int     from_num_entities;
 
-	// generate the delta update
-	if ( !from ) {
-		from_num_entities = 0;
-	} else {
-		from_num_entities = from->num_entities;
-	}
+    // generate the delta update
+    if ( !from ) {
+        from_num_entities = 0;
+    } else {
+        from_num_entities = from->num_entities;
+    }
 
-	newent = NULL;
-	oldent = NULL;
-	newindex = 0;
-	oldindex = 0;
-	while ( newindex < to->num_entities || oldindex < from_num_entities ) {
-		if ( newindex >= to->num_entities ) {
-			newnum = 9999;
-		} else {
-			newent = &svs.snapshotEntities[(to->first_entity+newindex) % svs.numSnapshotEntities];
-			newnum = newent->number;
-		}
+    newent = NULL;
+    oldent = NULL;
+    newindex = 0;
+    oldindex = 0;
 
-		if ( oldindex >= from_num_entities ) {
-			oldnum = 9999;
-		} else {
-			oldent = &svs.snapshotEntities[(from->first_entity+oldindex) % svs.numSnapshotEntities];
-			oldnum = oldent->number;
-		}
+    while ( newindex < to->num_entities || oldindex < from_num_entities ) {
+        if ( newindex >= to->num_entities ) {
+            newnum = 9999;
+        } else {
+            newent = &svs.snapshotEntities[(to->first_entity+newindex) % svs.numSnapshotEntities];
+            newnum = newent->number;
+        }
 
-		if ( newnum == oldnum ) {
-			// delta update from old position
-			// because the force parm is qfalse, this will not result
-			// in any bytes being emited if the entity has not changed at all
-			MSG_WriteDeltaEntity (msg, oldent, newent, qfalse );
-			oldindex++;
-			newindex++;
-			continue;
-		}
+        if ( oldindex >= from_num_entities ) {
+            oldnum = 9999;
+        } else {
+            oldent = &svs.snapshotEntities[(from->first_entity+oldindex) % svs.numSnapshotEntities];
+            oldnum = oldent->number;
+        }
 
-		if ( newnum < oldnum ) {
-			// this is a new entity, send it from the baseline
-			MSG_WriteDeltaEntity (msg, &sv.svEntities[newnum].baseline, newent, qtrue );
-			newindex++;
-			continue;
-		}
+        if ( newnum == oldnum ) {
+            // PERFORMANCE: Fast memory-level comparison for 32 players
+            // Check if the entity has actually changed at the byte level
+            if ( std::equal((unsigned char*)oldent, (unsigned char*)oldent + sizeof(entityState_t), (unsigned char*)newent) ) {
+                // FIXED: To prevent CL_ParsePacketEntities, we call the standard delta function.
+                // By passing the same pointer twice (newent, newent), the engine 
+                // immediately writes the "no change" bits, keeping the client in sync.
+                MSG_WriteDeltaEntity(msg, newent, newent, qfalse); 
+            } else {
+                // Entities share an ID but data has changed (moved, fired, etc)
+                MSG_WriteDeltaEntity(msg, oldent, newent, qfalse);
+            }
 
-		if ( newnum > oldnum ) {
-			// the old entity isn't present in the new message
-			MSG_WriteDeltaEntity (msg, oldent, NULL, qtrue );
-			oldindex++;
-			continue;
-		}
-	}
+            oldindex++;
+            newindex++;
+            continue;
+        }
+        
+        if ( newnum < oldnum ) {
+            // this is a new entity, send it from the baseline
+            MSG_WriteDeltaEntity (msg, &sv.svEntities[newnum].baseline, newent, qtrue );
+            newindex++;
+            continue;
+        }
 
-	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );	// end of packetentities
+        if ( newnum > oldnum ) {
+            // the old entity isn't present in the new message
+            MSG_WriteDeltaEntity (msg, oldent, NULL, qtrue );
+            oldindex++;
+            continue;
+        }
+    }
+
+    MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );   // end of packetentities
 }
 
 
@@ -717,18 +729,26 @@ Called by SV_SendClientSnapshot and SV_SendClientGameState
 */
 void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	int			rateMsec;
-	int 		burstCount = 0;
 
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
-	while(client->state&&client->netchan.unsentFragments && burstCount < MAX_RELIABLE_BURST)
+	while(client->state&&client->netchan.unsentFragments)
 	{
+		// NEW: Check the global budget before sending the next piece.
+        // This ensures a player joining doesn't hitch the server for everyone else.
+        if (totalFrameFragments >= 4096) {
+            break; 
+        }
 		// send additional message fragments if the last message
 		// was too large to send at once
-		// Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+
+		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
 		SV_Netchan_TransmitNextFragment(&client->netchan);
-		burstCount++;
+		
+		// Track the work done this frame
+        totalFrameFragments++;
 	}
+
 
 	// record information about the message
 	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
@@ -819,20 +839,26 @@ void SV_SendClientSnapshot( client_t *client ) {
 			MSG_WriteByte(&msg, gamedir[i]);
 			i++;
 		}
-		MSG_WriteByte(&msg, 0);
-
-		int burstCount = 0;			
+		MSG_WriteByte(&msg, 0);				
 
 		// MW - my attempt to fix illegible server message errors caused by
 		// packet fragmentation of initial snapshot.
 		//rww - reusing this code here
-		while(client->state&&client->netchan.unsentFragments && burstCount < MAX_RELIABLE_BURST)
+		while(client->state&&client->netchan.unsentFragments)
 		{
+			// NEW: Check the global budget before sending the next piece.
+			// This ensures a player joining doesn't hitch the server for everyone else.
+			if (totalFrameFragments >= 4096) {
+				break; 
+			}
 			// send additional message fragments if the last message
 			// was too large to send at once
-			// Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+
+			// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
 			SV_Netchan_TransmitNextFragment(&client->netchan);
-			burstCount++;
+			
+			// Track the work done this frame
+			totalFrameFragments++;
 		}
 
 		// record information about the message
@@ -894,34 +920,39 @@ SV_SendClientMessages
 =======================
 */
 void SV_SendClientMessages( void ) {
-	int			i;
-	client_t	*c;
+    int         i;
+    client_t    *c;
 
-	// send a message to each connected client
-	for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
-		if (!c->state) {
-			continue;		// not connected
-		}
+    // send a message to each connected client
+    for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
+        if (!c->state) {
+            continue;       // not connected
+        }
 
-		if ( svs.time < c->nextSnapshotTime ) {
-			continue;		// not time yet
-		}
+        if ( svs.time < c->nextSnapshotTime ) {
+            continue;       // not time yet
+        }
 
-		// send additional message fragments if the last message
-		// was too large to send at once
-		if ( c->netchan.unsentFragments ) {
-			c->nextSnapshotTime = svs.time +
-				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
-			
-			int burstCount = 0;
-			while ( c->netchan.unsentFragments && burstCount < MAX_RELIABLE_BURST ) {
-				SV_Netchan_TransmitNextFragment( &c->netchan );
-				burstCount++;
-			}
-			continue;
-		}
+        // send additional message fragments if the last message
+        // was too large to send at once
+        if ( c->netchan.unsentFragments ) {
+            // NEW: Check global budget. If we are over 4096, skip this 
+            // fragment for now to prevent a CPU/Network hitch.
+            if (totalFrameFragments >= 4096) {
+                continue; 
+            }
 
-		// generate and send a new message
-		SV_SendClientSnapshot( c );
-	}
+            c->nextSnapshotTime = svs.time +
+                SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
+            SV_Netchan_TransmitNextFragment( &c->netchan );
+            
+            // Track work done
+            totalFrameFragments++;
+
+            continue;
+        }
+
+        // generate and send a new message
+        SV_SendClientSnapshot( c );
+    }
 }

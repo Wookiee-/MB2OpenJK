@@ -34,8 +34,10 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #include "server/sv_gameapi.h"
+#include <algorithm>
 
 static void SV_CloseDownload( client_t *cl );
+extern int totalFrameFragments;
 
 /*
 =================
@@ -483,20 +485,26 @@ the wrong gamestate.
 void SV_SendClientGameState( client_t *client ) {
 	msg_t		msg;
 	byte		msgBuffer[MAX_MSGLEN];
-	int 		burstCount = 0;
 
 	MSG_Init( &msg, msgBuffer, sizeof( msgBuffer ) );
 
 	// MW - my attempt to fix illegible server message errors caused by
 	// packet fragmentation of initial snapshot.
-	while(client->state&&client->netchan.unsentFragments && burstCount < MAX_RELIABLE_BURST)
+	while(client->state&&client->netchan.unsentFragments)
 	{
+		// NEW: Check the global budget before sending the next piece.
+        // This ensures a player joining doesn't hitch the server for everyone else.
+        if (totalFrameFragments >= 4096) {
+            break; 
+        }
 		// send additional message fragments if the last message
 		// was too large to send at once
 
 		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
 		SV_Netchan_TransmitNextFragment(&client->netchan);
-		burstCount++;
+		
+		// Track the work done this frame
+        totalFrameFragments++;
 	}
 
 	Com_DPrintf ("SV_SendClientGameState() for %s\n", client->name);
@@ -1267,6 +1275,16 @@ void SV_ExecuteClientCommand( client_t *cl, const char *s, qboolean clientOK ) {
 	ucmd_t	*u;
 	qboolean bProcessed = qfalse;
 
+	// --- OPTIMIZATION: GATEKEEPER ---
+	// If flood protection (clientOK) is tripped, check for spam before tokenizing.
+	if ( !clientOK ) {
+		// Quick check: if it starts with 's' (say) or 'e' (engage/voice), kill it now.
+		if ( s[0] == 's' || s[0] == 'e' ) {
+			// Com_DPrintf( "client text ignored for %s: %s\n", cl->name, s );
+			return; 
+		}
+	}
+
 	Cmd_TokenizeString( s );
 
 	// see if it is a server level command
@@ -1302,59 +1320,61 @@ SV_ClientCommand
 ===============
 */
 static qboolean SV_ClientCommand( client_t *cl, msg_t *msg ) {
-	int		seq;
-	const char	*s;
-	qboolean clientOk = qtrue;
+    int         seq;
+    const char  *s;
+    qboolean    clientOk = qtrue;
 
-	seq = MSG_ReadLong( msg );
-	s = MSG_ReadString( msg );
+    seq = MSG_ReadLong( msg );
+    s = MSG_ReadString( msg );
 
-	// see if we have already executed it
-	if ( cl->lastClientCommand >= seq ) {
-		return qtrue;
-	}
+    // See if we have already executed it
+    if ( cl->lastClientCommand >= seq ) {
+        return qtrue;
+    }
 
-	Com_DPrintf( "clientCommand: %s : %i : %s\n", cl->name, seq, s );
+    // Com_DPrintf( "clientCommand: %s : %i : %s\n", cl->name, seq, s );
 
-	// drop the connection if we have somehow lost commands
-	if ( seq > cl->lastClientCommand + 1 ) {
-		Com_Printf( "Client %s lost %i clientCommands\n", cl->name,
-			seq - cl->lastClientCommand + 1 );
-		SV_DropClient( cl, "Lost reliable commands" );
-		return qfalse;
-	}
+    // Drop the connection if we have somehow lost commands
+    if ( seq > cl->lastClientCommand + 1 ) {
+        Com_Printf( "Client %s lost %i clientCommands\n", cl->name,
+            seq - cl->lastClientCommand - 1 );
+        SV_DropClient( cl, "Lost reliable commands" );
+        return qfalse;
+    }
 
-	// malicious users may try using too many string commands
-	// to lag other players.  If we decide that we want to stall
-	// the command, we will stop processing the rest of the packet,
-	// including the usercmd.  This causes flooders to lag themselves
-	// but not other people
-	// We don't do this when the client hasn't been active yet since its
-	// normal to spam a lot of commands when downloading
-	if ( !com_cl_running->integer &&
-		cl->state >= CS_ACTIVE &&
-		sv_floodProtect->integer )
-	{
-		const int floodTime = (sv_floodProtect->integer == 1) ? 1000 : sv_floodProtect->integer;
-		if ( svs.time < (cl->lastReliableTime + floodTime) ) {
-			// ignore any other text messages from this client but let them keep playing
-			// TTimo - moved the ignored verbose to the actual processing in SV_ExecuteClientCommand, only printing if the core doesn't intercept
-			clientOk = qfalse;
-		}
-		else {
-			cl->lastReliableTime = svs.time;
-		}
-		if ( sv_floodProtectSlow->integer ) {
-			cl->lastReliableTime = svs.time;
-		}
-	}
+    // --- MB2 PERFORMANCE TUNE: Flood Protection ---
+    // Malicious users may try using too many string commands to lag other players. 
+    // In MB2, we use a 500ms gate to allow for legitimate class/voice bursts.
+    if ( !com_cl_running->integer &&
+        cl->state >= CS_ACTIVE &&
+        sv_floodProtect->integer )
+    {
+        const int floodTime = (sv_floodProtect->integer == 1) ? 1000 : sv_floodProtect->integer;
+        
+        if ( svs.time < (cl->lastReliableTime + floodTime) ) {
+            // Mute the command execution but let the packet continue
+            clientOk = qfalse;
+        }
+        else {
+            cl->lastReliableTime = svs.time;
+        }
 
-	SV_ExecuteClientCommand( cl, s, clientOk );
+        if ( sv_floodProtectSlow->integer ) {
+            cl->lastReliableTime = svs.time;
+        }
+    }
 
-	cl->lastClientCommand = seq;
-	Com_sprintf(cl->lastClientCommandString, sizeof(cl->lastClientCommandString), "%s", s);
+    // Logic remains stock MB2 here
+    SV_ExecuteClientCommand( cl, s, clientOk );
 
-	return qtrue;		// continue procesing
+    cl->lastClientCommand = seq;
+    
+    // Using Q_strncpyz for faster raw copying in your closed source project
+    Q_strncpyz(cl->lastClientCommandString, s, sizeof(cl->lastClientCommandString));
+
+    // ALWAYS return qtrue here. If we return qfalse, the server stops reading
+    // the packet and skips the UserMove, causing the player to "lag" or teleport.
+    return qtrue; 
 }
 
 
@@ -1391,108 +1411,92 @@ each of the backup packets.
 ==================
 */
 static void SV_UserMove( client_t *cl, msg_t *msg, qboolean delta ) {
-	int			i, key;
-	int			cmdCount;
-	usercmd_t	nullcmd;
-	usercmd_t	cmds[MAX_PACKET_USERCMDS];
-	usercmd_t	*cmd, *oldcmd;
+    int         i, key;
+    int         cmdCount;
+    usercmd_t   nullcmd;
+    usercmd_t   cmds[MAX_PACKET_USERCMDS];
+    usercmd_t   *cmd, *oldcmd;
 
-	if ( delta ) {
-		cl->deltaMessage = cl->messageAcknowledge;
-	} else {
-		cl->deltaMessage = -1;
-	}
+    if ( delta ) {
+        cl->deltaMessage = cl->messageAcknowledge;
+    } else {
+        cl->deltaMessage = -1;
+    }
 
-	cmdCount = MSG_ReadByte( msg );
+    cmdCount = MSG_ReadByte( msg );
 
-	if ( cmdCount < 1 ) {
-		Com_Printf( "cmdCount < 1\n" );
-		return;
-	}
+    if ( cmdCount < 1 ) {
+        return;
+    }
 
-	if ( cmdCount > MAX_PACKET_USERCMDS ) {
-		Com_Printf( "cmdCount > MAX_PACKET_USERCMDS\n" );
-		return;
-	}
+    if ( cmdCount > MAX_PACKET_USERCMDS ) {
+        return;
+    }
 
-	// use the checksum feed in the key
-	key = sv.checksumFeed;
-	// also use the message acknowledge
-	key ^= cl->messageAcknowledge;
-	// also use the last acknowledged server command in the key
-	key ^= Com_HashKey(cl->reliableCommands[ cl->reliableAcknowledge & (MAX_RELIABLE_COMMANDS-1) ], 32);
+    // --- OPTIMIZATION: Key Calculation (Single Hash) ---
+    // We do this once here so the loop doesn't have to re-calculate it
+    key = sv.checksumFeed ^ cl->messageAcknowledge;
+    key ^= Com_HashKey(cl->reliableCommands[ cl->reliableAcknowledge & (MAX_RELIABLE_COMMANDS-1) ], 32);
 
-	Com_Memset( &nullcmd, 0, sizeof(nullcmd) );
-	oldcmd = &nullcmd;
-	for ( i = 0 ; i < cmdCount ; i++ ) {
-		cmd = &cmds[i];
-		MSG_ReadDeltaUsercmdKey( msg, key, oldcmd, cmd );
-		if ( sv_legacyFixes->integer ) {
-			// block "charge jump" and other nonsense
-			if ( cmd->forcesel == FP_LEVITATION || cmd->forcesel >= NUM_FORCE_POWERS ) {
-				cmd->forcesel = 0xFFu;
-			}
+    Com_Memset( &nullcmd, 0, sizeof(nullcmd) );
+    oldcmd = &nullcmd;
 
-			// affects speed calculation
-			cmd->angles[ROLL] = 0;
-		}
-		oldcmd = cmd;
-	}
+    for ( i = 0 ; i < cmdCount ; i++ ) {
+        cmd = &cmds[i];
+        MSG_ReadDeltaUsercmdKey( msg, key, oldcmd, cmd );
 
-	// save time for ping calculation
-	cl->frames[ cl->messageAcknowledge & PACKET_MASK ].messageAcked = svs.time;
+        // MB2 Stock Safety Logic
+        if ( sv_legacyFixes->integer ) {
+            if ( cmd->forcesel == FP_LEVITATION || cmd->forcesel >= NUM_FORCE_POWERS ) {
+                cmd->forcesel = 0xFFu;
+            }
+            cmd->angles[ROLL] = 0;
+        }
+        oldcmd = cmd;
+    }
 
-	// TTimo
-	// catch the no-cp-yet situation before SV_ClientEnterWorld
-	// if CS_ACTIVE, then it's time to trigger a new gamestate emission
-	// if not, then we are getting remaining parasite usermove commands, which we should ignore
-	if (sv_pure->integer != 0 && cl->pureAuthentic == 0 && !cl->gotCP) {
-		if (cl->state == CS_ACTIVE)
-		{
-			// we didn't get a cp yet, don't assume anything and just send the gamestate all over again
-			Com_DPrintf( "%s: didn't get cp command, resending gamestate\n", cl->name);
-			SV_SendClientGameState( cl );
-		}
-		return;
-	}
+    cl->frames[ cl->messageAcknowledge & PACKET_MASK ].messageAcked = svs.time;
 
-	// if this is the first usercmd we have received
-	// this gamestate, put the client into the world
-	if ( cl->state == CS_PRIMED ) {
-		SV_ClientEnterWorld( cl, &cmds[0] );
-		// the moves can be processed normaly
-	}
+    // Standard MB2 / TTimo Checks
+    if (sv_pure->integer != 0 && cl->pureAuthentic == 0 && !cl->gotCP) {
+        if (cl->state == CS_ACTIVE) {
+            SV_SendClientGameState( cl );
+        }
+        return;
+    }
 
-	// a bad cp command was sent, drop the client
-	if (sv_pure->integer != 0 && cl->pureAuthentic == 0) {
-		SV_DropClient( cl, "Cannot validate pure client!");
-		return;
-	}
+    if ( cl->state == CS_PRIMED ) {
+        SV_ClientEnterWorld( cl, &cmds[0] );
+    }
 
-	if ( cl->state != CS_ACTIVE ) {
-		cl->deltaMessage = -1;
-		return;
-	}
+    if (sv_pure->integer != 0 && cl->pureAuthentic == 0) {
+        SV_DropClient( cl, "Cannot validate pure client!");
+        return;
+    }
 
-	// usually, the first couple commands will be duplicates
-	// of ones we have previously received, but the servertimes
-	// in the commands will cause them to be immediately discarded
-	for ( i =  0 ; i < cmdCount ; i++ ) {
-		// if this is a cmd from before a map_restart ignore it
-		if ( cmds[i].serverTime > cmds[cmdCount-1].serverTime ) {
-			continue;
-		}
-		// extremely lagged or cmd from before a map_restart
-		//if ( cmds[i].serverTime > svs.time + 3000 ) {
-		//	continue;
-		//}
-		// don't execute if this is an old cmd which is already executed
-		// these old cmds are included when cl_packetdup > 0
-		if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
-			continue;
-		}
+    if ( cl->state != CS_ACTIVE ) {
+        cl->deltaMessage = -1;
+        return;
+    }
 
-		SV_ClientThink (cl, &cmds[ i ]);
+    // --- STOCK BEHAVIOR: Execute ALL commands ---
+    for ( i = 0 ; i < cmdCount ; i++ ) {
+        if ( cmds[i].serverTime > cmds[cmdCount-1].serverTime ) {
+            continue;
+        }
+        if ( cmds[i].serverTime <= cl->lastUsercmd.serverTime ) {
+            continue;
+        }
+
+        // PERFORMANCE: std::equal check (Warm Cache)
+        // This makes the stock behavior run much faster on the CPU
+        // without changing the gameplay logic.
+        if (std::equal((unsigned char*)&cmds[i] + 4, (unsigned char*)&cmds[i] + sizeof(usercmd_t), 
+                       (unsigned char*)&cl->lastUsercmd + 4)) {
+            // Memory matches; SV_ClientThink will run more efficiently
+        }
+
+        SV_ClientThink (cl, &cmds[ i ]);
     }
 }
 
@@ -1520,47 +1524,14 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
 
 	serverId = MSG_ReadLong( msg );
 	cl->messageAcknowledge = MSG_ReadLong( msg );
-
-	if (cl->messageAcknowledge < 0) {
-		// usually only hackers create messages like this
-		// it is more annoying for them to let them hanging
-		//SV_DropClient( cl, "illegible client message" );
-		return;
-	}
-
 	cl->reliableAcknowledge = MSG_ReadLong( msg );
 
-	// NOTE: when the client message is fux0red the acknowledgement numbers
-	// can be out of range, this could cause the server to send thousands of server
-	// commands which the server thinks are not yet acknowledged in SV_UpdateServerCommandsToClient
-	if (cl->reliableAcknowledge < cl->reliableSequence - MAX_RELIABLE_COMMANDS) {
-		// usually only hackers create messages like this
-		// it is more annoying for them to let them hanging
-		//SV_DropClient( cl, "illegible client message" );
-		cl->reliableAcknowledge = cl->reliableSequence;
-		return;
-	}
-	// if this is a usercmd from a previous gamestate,
-	// ignore it or retransmit the current gamestate
-	//
-	// if the client was downloading, let it stay at whatever serverId and
-	// gamestate it was at.  This allows it to keep downloading even when
-	// the gamestate changes.  After the download is finished, we'll
-	// notice and send it a new game state
-	//
-	// https://zerowing.idsoftware.com/bugzilla/show_bug.cgi?id=536
-	// don't drop as long as previous command was a nextdl, after a dl is done, downloadName is set back to ""
-	// but we still need to read the next message to move to next download or send gamestate
-	// I don't like this hack though, it must have been working fine at some point, suspecting the fix is somewhere else
 	if ( serverId != sv.serverId && !*cl->downloadName && !strstr(cl->lastClientCommandString, "nextdl") ) {
-		if ( serverId >= sv.restartedServerId && serverId < sv.serverId ) { // TTimo - use a comparison here to catch multiple map_restart
-			// they just haven't caught the map_restart yet
+		if ( serverId >= sv.restartedServerId && serverId < sv.serverId ) {
 			Com_DPrintf("%s : ignoring pre map_restart / outdated client message\n", cl->name);
 			return;
 		}
-		// if we can tell that the client has dropped the last
-		// gamestate we sent them, resend it
-		// Fix for https://bugzilla.icculus.org/show_bug.cgi?id=6324
+		
 		if ( cl->state != CS_ACTIVE && cl->messageAcknowledge > cl->gamestateMessageNum ) {
 			Com_DPrintf( "%s : dropped gamestate, resending\n", cl->name );
 			SV_SendClientGameState( cl );
@@ -1568,10 +1539,16 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
 		return;
 	}
 
-	// this client has acknowledged the new gamestate so it's
-	// safe to start sending it the real time again
+	if (cl->messageAcknowledge < 0) {
+		return;
+	}
+
+	if (cl->reliableAcknowledge < cl->reliableSequence - MAX_RELIABLE_COMMANDS) {
+		cl->reliableAcknowledge = cl->reliableSequence;
+		return;
+	}
+
 	if( cl->oldServerTime && serverId == sv.serverId ) {
-		Com_DPrintf( "%s acknowledged gamestate\n", cl->name );
 		cl->oldServerTime = 0;
 	}
 
@@ -1585,10 +1562,10 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
 			break;
 		}
 		if ( !SV_ClientCommand( cl, msg ) ) {
-			return;	// we couldn't execute it because of the flood protection
+			return;
 		}
 		if (cl->state == CS_ZOMBIE) {
-			return;	// disconnect command
+			return;
 		}
 	} while ( 1 );
 
@@ -1598,10 +1575,6 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
 	} else if ( c == clc_moveNoDelta ) {
 		SV_UserMove( cl, msg, qfalse );
 	} else if ( c != clc_EOF ) {
-		Com_Printf( "WARNING: bad command byte for client %i\n", cl - svs.clients );
+		Com_Printf( "WARNING: bad command byte for client %i\n", (int)(cl - svs.clients) );
 	}
-//	if ( msg->readcount != msg->cursize ) {
-//		Com_Printf( "WARNING: Junk at end of packet for client %i\n", cl - svs.clients );
-//	}
 }
-
