@@ -242,6 +242,8 @@ if(BuildMPEngine OR BuildMPDed)
 		"${MPDir}/qcommon/GenericParser2.cpp"
 		"${MPDir}/qcommon/GenericParser2.h"
 		"${MPDir}/qcommon/huffman.cpp"
+		"${MPDir}/qcommon/huffman_static.cpp"
+		"${MPDir}/qcommon/huffman_static.h"
 		"${MPDir}/qcommon/md4.cpp"
 		"${MPDir}/qcommon/md5.cpp"
 		"${MPDir}/qcommon/md5.h"

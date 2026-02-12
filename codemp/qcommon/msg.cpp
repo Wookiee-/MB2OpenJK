@@ -25,11 +25,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon/q_shared.h"
 #include "qcommon/qcommon.h"
 #include "server/server.h"
+#include "huffman_static.h"
 
 //#define _NEWHUFFTABLE_		// Build "c:\\netchan.bin"
 //#define _USINGNEWHUFFTABLE_		// Build a new frequency table to cut and paste.
 
-static huffman_t		msgHuff;
+// static huffman_t		msgHuff;
 
 static qboolean			msgInit = qfalse;
 #ifdef _NEWHUFFTABLE_
@@ -135,178 +136,185 @@ int	overflows;
 
 // negative bit values include signs
 void MSG_WriteBits( msg_t *msg, int value, int bits ) {
-	int	i;
+    int i;
 
-	oldsize += bits;
+    oldsize += bits;
 
-	if ( msg->overflowed ) {
-		return;
-	}
+    if ( msg->overflowed ) {
+        return;
+    }
 
-	if ( bits == 0 || bits < -31 || bits > 32 ) {
-		Com_Error( ERR_DROP, "MSG_WriteBits: bad bits %i", bits );
-	}
+    if ( bits == 0 || bits < -31 || bits > 32 ) {
+        Com_Error( ERR_DROP, "MSG_WriteBits: bad bits %i", bits );
+    }
 
-	// check for overflows
-	if ( bits != 32 ) {
-		if ( bits > 0 ) {
-			if ( value > ( ( 1 << bits ) - 1 ) || value < 0 ) {
-				overflows++;
-#ifndef FINAL_BUILD
-//				Com_Printf ("MSG_WriteBits: overflow writing %d in %d bits [index %i]\n", value, bits, gLastBitIndex);
-#endif
-			}
-		} else {
-			int	r;
+    // check for overflows
+    if ( bits != 32 ) {
+        if ( bits > 0 ) {
+            if ( value > ( ( 1 << bits ) - 1 ) || value < 0 ) {
+                overflows++;
+            }
+        } else {
+            int r;
+            r = 1 << (bits-1);
+            if ( value >  r - 1 || value < -r ) {
+                overflows++;
+            }
+        }
+    }
 
-			r = 1 << (bits-1);
+    if ( bits < 0 ) {
+        bits = -bits;
+    }
 
-			if ( value >  r - 1 || value < -r ) {
-				overflows++;
-#ifndef FINAL_BUILD
-//				Com_Printf ("MSG_WriteBits: overflow writing %d in %d bits [index %i]\n", value, bits, gLastBitIndex);
-#endif
-			}
-		}
-	}
-	if ( bits < 0 ) {
-		bits = -bits;
-	}
-	if (msg->oob) {
-		if ( msg->cursize + ( bits >> 3 ) > msg->maxsize ) {
-			msg->overflowed = qtrue;
-			return;
-		}
+    if (msg->oob) {
+        if ( msg->cursize + ( bits >> 3 ) > msg->maxsize ) {
+            msg->overflowed = qtrue;
+            return;
+        }
 
-		if (bits==8) {
-			msg->data[msg->cursize] = value;
-			msg->cursize += 1;
-			msg->bit += 8;
-		} else if (bits==16) {
-			short temp = value;
-
-			CopyLittleShort(&msg->data[msg->cursize], &temp);
-			msg->cursize += 2;
-			msg->bit += 16;
-		} else if (bits==32) {
-			CopyLittleLong(&msg->data[msg->cursize], &value);
-			msg->cursize += 4;
-			msg->bit += 32;
-		} else {
-			Com_Error(ERR_DROP, "can't write %d bits\n", bits);
-		}
-	} else {
-		value &= (0xffffffff>>(32-bits));
-		if (bits&7) {
-			int nbits;
-			nbits = bits&7;
-			if ( msg->bit + nbits > msg->maxsize << 3 ) {
-				msg->overflowed = qtrue;
-				return;
-			}
-			for(i=0;i<nbits;i++) {
-				Huff_putBit((value&1), msg->data, &msg->bit);
-				value = (value>>1);
-			}
-			bits = bits - nbits;
-		}
-		if (bits) {
-			for(i=0;i<bits;i+=8) {
+        if (bits==8) {
+            msg->data[msg->cursize] = value;
+            msg->cursize += 1;
+            msg->bit += 8;
+        } else if (bits==16) {
+            short temp = value;
+            CopyLittleShort(&msg->data[msg->cursize], &temp);
+            msg->cursize += 2;
+            msg->bit += 16;
+        } else if (bits==32) {
+            CopyLittleLong(&msg->data[msg->cursize], &value);
+            msg->cursize += 4;
+            msg->bit += 32;
+        } else {
+            Com_Error(ERR_DROP, "can't write %d bits\n", bits);
+        }
+    } else {
+        value &= (0xffffffff>>(32-bits));
+        if (bits&7) {
+            int nbits;
+            nbits = bits&7;
+            if ( msg->bit + nbits > msg->maxsize << 3 ) {
+                msg->overflowed = qtrue;
+                return;
+            }
+            for(i=0;i<nbits;i++) {
+                // Use the static replacement for Huff_putBit
+                StaticHuff_PutBit(msg->data, msg->bit, (value & 1));
+                msg->bit++; 
+                value = (value>>1);
+            }
+            bits = bits - nbits;
+        }
+        if (bits) {
+            for(i=0;i<bits;i+=8) {
 #ifdef _NEWHUFFTABLE_
-				fwrite(&value, 1, 1, fp);
+                fwrite(&value, 1, 1, fp);
 #endif // _NEWHUFFTABLE_
-				Huff_offsetTransmit (&msgHuff.compressor, (value&0xff), msg->data, &msg->bit, msg->maxsize << 3);
-				value = (value>>8);
+                
+                // Use the static replacement for Huff_offsetTransmit
+                // This eliminates the tree-rebalancing "hitch"
+                msg->bit += StaticHuff_PutSymbol(msg->data, msg->bit, (value & 0xff));
+                value = (value>>8);
 
-				if ( msg->bit > msg->maxsize << 3 ) {
-					msg->overflowed = qtrue;
-					return;
-				}
-			}
-		}
-		msg->cursize = (msg->bit>>3)+1;
-	}
+                if ( msg->bit > msg->maxsize << 3 ) {
+                    msg->overflowed = qtrue;
+                    return;
+                }
+            }
+        }
+        msg->cursize = (msg->bit>>3)+1;
+    }
 }
 
 int MSG_ReadBits( msg_t *msg, int bits ) {
-	int			value;
-	int			get;
-	qboolean	sgn;
-	int			i, nbits;
+    int         value;
+    int         get;
+    qboolean     sgn;
+    int         i, nbits;
 
-	if ( msg->readcount > msg->cursize ) {
-		return 0;
-	}
+    if ( msg->readcount > msg->cursize ) {
+        return 0;
+    }
 
-	value = 0;
+    value = 0;
 
-	if ( bits < 0 ) {
-		bits = -bits;
-		sgn = qtrue;
-	} else {
-		sgn = qfalse;
-	}
+    if ( bits < 0 ) {
+        bits = -bits;
+        sgn = qtrue;
+    } else {
+        sgn = qfalse;
+    }
 
-	if (msg->oob) {
-		if (msg->readcount + (bits>>3) > msg->cursize) {
-			msg->readcount = msg->cursize + 1;
-			return 0;
-		}
+    if (msg->oob) {
+        if (msg->readcount + (bits>>3) > msg->cursize) {
+            msg->readcount = msg->cursize + 1;
+            return 0;
+        }
 
-		if (bits==8) {
-			value = msg->data[msg->readcount];
-			msg->readcount += 1;
-			msg->bit += 8;
-		} else if (bits==16) {
-			short temp;
+        if (bits==8) {
+            value = msg->data[msg->readcount];
+            msg->readcount += 1;
+            msg->bit += 8;
+        } else if (bits==16) {
+            short temp;
 
-			CopyLittleShort(&temp, &msg->data[msg->readcount]);
-			value = temp;
-			msg->readcount += 2;
-			msg->bit += 16;
-		} else if (bits==32) {
-			CopyLittleLong(&value, &msg->data[msg->readcount]);
-			msg->readcount += 4;
-			msg->bit += 32;
-		} else {
-			Com_Error(ERR_DROP, "can't read %d bits\n", bits);
-		}
-	} else {
-		nbits = 0;
-		if (bits&7) {
-			nbits = bits&7;
-			if (msg->bit + nbits > msg->cursize << 3) {
-				msg->readcount = msg->cursize + 1;
-				return 0;
-			}
-			for(i=0;i<nbits;i++) {
-				value |= (Huff_getBit(msg->data, &msg->bit)<<i);
-			}
-			bits = bits - nbits;
-		}
-		if (bits) {
-			for(i=0;i<bits;i+=8) {
-				Huff_offsetReceive (msgHuff.decompressor.tree, &get, msg->data, &msg->bit, msg->cursize<<3);
+            CopyLittleShort(&temp, &msg->data[msg->readcount]);
+            value = temp;
+            msg->readcount += 2;
+            msg->bit += 16;
+        } else if (bits==32) {
+            CopyLittleLong(&value, &msg->data[msg->readcount]);
+            msg->readcount += 4;
+            msg->bit += 32;
+        } else {
+            Com_Error(ERR_DROP, "can't read %d bits\n", bits);
+        }
+    } else {
+        nbits = 0;
+        if (bits&7) {
+            nbits = bits&7;
+            if (msg->bit + nbits > msg->cursize << 3) {
+                msg->readcount = msg->cursize + 1;
+                return 0;
+            }
+            for(i=0;i<nbits;i++) {
+                // Replaced Huff_getBit with StaticHuff_GetBit
+                value |= (StaticHuff_GetBit(msg->data, msg->bit) << i);
+                msg->bit++;
+            }
+            bits = bits - nbits;
+        }
+        if (bits) {
+            for(i=0;i<bits;i+=8) {
+                // Replaced Huff_offsetReceive with StaticHuff_GetSymbol
+                // This uses your 2048-entry lookup table for instant decoding
+                unsigned int symbol;
+                msg->bit += StaticHuff_GetSymbol(&symbol, msg->data, msg->bit);
+                get = (int)symbol;
+
 #ifdef _NEWHUFFTABLE_
-				fwrite(&get, 1, 1, fp);
+                fwrite(&get, 1, 1, fp);
 #endif // _NEWHUFFTABLE_
-				value |= (get<<(i+nbits));
+                value |= (get<<(i+nbits));
 
-				if (msg->bit > msg->cursize<<3) {
-					msg->readcount = msg->cursize + 1;
-					return 0;
-				}
-			}
-		}
-		msg->readcount = (msg->bit>>3)+1;
-	}
-	if ( sgn && bits > 0 && bits < 32 ) {
-		if ( value & ( 1 << ( bits - 1 ) ) ) {
-			value |= -1 ^ ( ( 1 << bits ) - 1 );
-		}
-	}
+                if (msg->bit > msg->cursize<<3) {
+                    msg->readcount = msg->cursize + 1;
+                    return 0;
+                }
+            }
+        }
+        msg->readcount = (msg->bit>>3)+1;
+    }
+    
+    // Maintain sign extension logic exactly as it was
+    if ( sgn && bits > 0 && bits < 32 ) {
+        if ( value & ( 1 << ( bits - 1 ) ) ) {
+            value |= -1 ^ ( ( 1 << bits ) - 1 );
+        }
+    }
 
-	return value;
+    return value;
 }
 
 
@@ -3060,20 +3068,20 @@ int msg_hData[256] = {
 #ifndef _USINGNEWHUFFTABLE_
 
 void MSG_initHuffman() {
-	int i,j;
+//	int i;
 
 #ifdef _NEWHUFFTABLE_
 	fp=fopen("c:\\netchan.bin", "a");
 #endif // _NEWHUFFTABLE_
 
 	msgInit = qtrue;
-	Huff_Init(&msgHuff);
+/*	Huff_Init(&msgHuff);
 	for(i=0;i<256;i++) {
 		for (j=0;j<msg_hData[i];j++) {
 			Huff_addRef(&msgHuff.compressor,	(byte)i);			// Do update
 			Huff_addRef(&msgHuff.decompressor,	(byte)i);			// Do update
 		}
-	}
+	} */
 }
 
 #else
