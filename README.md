@@ -14,32 +14,39 @@ The stock engine was built for an era of low bandwidth and small player counts. 
 **Implementation:** `huffman_static.cpp` / `msg.cpp`
 
 * **Elimination of Adaptive Hitches:** Replaces the stock `msgHuff` adaptive tree with pre-computed Static Huffman lookup tables.
-* **Constant-Time Processing:** The server no longer spends CPU cycles "learning" frequency patterns or re-balancing trees during heavy combat. Compression time remains constant regardless of snapshot size.
+* **Constant-Time Processing:** The server no longer spends CPU cycles "learning" frequency patterns or re-balancing trees during heavy combat.
 * **Surgical Bypass:** The system bypasses `Huff_addRef` and `Huff_Init` calls, removing the primary cause of server-side micro-stutters during player join/spawn events.
 
 ## 2. Global Fragment Governor (4096 Safety)
-**Function:** `SV_SendClientMessages`, `SV_SendMessageToClient`, `SV_SendClientSnapshot`
+**Function:** `sv_main.cpp`, `sv_snapshot.cpp`, `sv_client.cpp`
 
 * **Global Burst Cap:** Introduces `totalFrameFragments` to track work done across all clients. The engine is capped at **4096 fragments per frame**.
-* **Anti-Hitch Protection:** If a massive burst of data (such as 32 players joining or a map restart) threatens to overwhelm the VPS CPU or the network buffer, the governor safely clips the data and defers it to the next frame.
-* **Congestion Control:** Prevents the "Packet Clumping" that causes players to teleport when the server tries to push too much data at once.
+* **Network Handshake Pacing:** In `sv_client.cpp`, the governor protects `SV_SendClientGameState`. This ensures that a player joining and requesting a large gamestate doesn't "hitch" the server's network output for existing players.
+* **Anti-Hitch Protection:** If a massive burst of data (such as 32 players joining or a map restart) threatens to overwhelm the VPS CPU, the governor safely clips the data and defers it to the next frame.
 
-## 3. Dedicated Server "Duel Isolation" (DuelCull)
-**Implementation:** `duel_cull.cpp` / `sv_snapshot.cpp`
+## 3. Command Spam Gatekeeper (Security)
+**Function:** `sv_client.cpp` (`SV_ExecuteClientCommand`)
+
+* **Early-Exit Logic:** Implements a high-performance "Gatekeeper" that checks for command spam *before* the engine performs expensive string tokenization.
+* **Flood Protection:** If flood protection is tripped, common chat/voice commands are discarded instantly. This prevents malicious users from lagging the server by spamming the `say` or `engage` commands.
+* **Enhanced Packet Reliability:** Modified `SV_ClientCommand` to always return `qtrue`, ensuring that even if a text command is muted for spam, the player's movement data (UserMove) in the same packet is still processed.
+
+## 4. Dedicated Server "Duel Isolation" (DuelCull)
+**Implementation:** `duel_cull.cpp` / `sv_snapshot.cpp` / `sv_world.cpp`
 
 * **Intelligent Culling:** Automatically hides players from those involved in a private duel. This significantly reduces the data footprint for dueling players.
-* **Direct Pointer Passing:** Replaces slow internal table lookups with direct `playerState_t` pointer passing to keep physics and snapshot generation loops fast.
+* **Direct Pointer Passing:** Replaces slow internal table lookups with direct `playerState_t` pointer passing in `sv_world.cpp` to keep physics and snapshot generation loops fast.
 * **NPC Persistence:** Ensures that `ET_NPC` (training dummies/bots) are never culled, maintaining visibility for all players.
 * **Performance Gate:** Controlled via `sv_snapShotDuelCull`. If disabled, the logic exits in a single cycle to save CPU.
 
-## 4. "Warm Cache" Snapshot Optimization
-**Function:** `SV_EmitPacketEntities`
+## 5. "Warm Cache" Snapshot Optimization
+**Function:** `sv_snapshot.cpp` (`SV_EmitPacketEntities`)
 
-* **Byte-Level Comparison:** Uses `std::equal` to perform a lightning-fast memory check between the current and previous entity states.
-* **Delta Efficiency:** If an entity (like a player standing still) hasn't changed at the byte level, the engine writes a single "no change" bit and skips the field-by-field delta calculation. This maximizes the headroom within the 49,152 `MAX_MSGLEN` buffer.
+* **Byte-Level Comparison:** Uses `std::equal` to perform a lightning-fast memory check between current and previous entity states.
+* **Delta Efficiency:** If an entity hasn't changed at the byte level, the engine writes a single "no change" bit and skips field-by-field delta calculation, maximizing headroom within the 48KB buffer.
 
-## 5. Engine-Side Logging
-**Function:** `SV_LogPrintf` / `GVM_LogPrintf`
+## 6. Engine-Side Logging
+**Function:** `sv_main.cpp` (`SV_LogPrintf`)
 
 * **Direct I/O:** Provides a bridge for the engine to write `DuelStart` and `DuelEnd` events directly to `games.log` or a custom log file (e.g., `duel-games.log`).
 * **Timestamp Accuracy:** Syncs logs with the engine's internal time (e.g., `3:09`) for precise match review.
@@ -49,7 +56,6 @@ The stock engine was built for an era of low bandwidth and small player counts. 
 
 ### Implementation Summary
 Verified for **OpenJK/MB2** compatibility. By combining Static Huffman compression with a 4096 fragment governor and intelligent culling, the Absolute Build ensures that the networking stack is no longer the bottleneck in high-population, high-fidelity saber combat environments.
-
 
 # OpenJK
 
