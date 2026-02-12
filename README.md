@@ -1,52 +1,54 @@
 # Network Performance & Safety Optimizations (Absolute Build)
 
-This document outlines the specific differences between the optimized "Absolute" networking stack and the stock OpenJK/MB2 engine. These changes prioritize high-throughput stability and implement intelligent entity culling for high-population Movie Battles II servers.
+This document outlines the specific differences between the optimized "Absolute" networking stack and the stock OpenJK/MB2 engine. These changes prioritize high-throughput stability, CPU hitch elimination, and intelligent entity culling for high-population Movie Battles II servers (up to 32 players).
 
-## 🟢 Why the Change? (2003 vs. 2026 Logic)
-The stock 2003 engine was built for a low-bandwidth era where snapshots were small. Modern MB2 environments use a massive **49,152 (48KB)** message buffer, which creates "Snapshot Bloat" that the original engine's fragment pacing cannot handle.
+## 🟢 Why the Change? (Modernizing the 1999 Stack)
+The stock engine was built for an era of low bandwidth and small player counts. Modern MB2 environments utilize a massive **49,152 (48KB)** message buffer. In high-intensity 32-player matches, the original engine's "Adaptive Huffman" compression and fragment pacing create severe bottlenecks.
 
-* **The Problem:** At high player counts (21-32), the engine's original fragment limits create a "Wait List" for data. This causes a **"Muddy"** movement feel and micro-hitching during heavy combat/death spikes.
-* **The Solution:** This build transitions to **High-Burst Networking**. It ensures the network pipe is wide enough to clear a full 32-player data burst in a single millisecond while maintaining server-side isolation for duels.
-
----
-
-## 1. Dedicated Server "Duel Isolation" (DuelCull)
-**Function:** `SV_AddEntitiesVisibleFromPoint` & `DuelCull` (`duel_cull.cpp`)
-
-* **Direct Pointer Passing:** Replaces internal `GetPS` table lookups with direct `playerState_t` pointer passing. This eliminates thousands of redundant lookups per second in the snapshot loop.
-* **Performance Gate:** Implements `sv_snapShotDuelCull`. If disabled, the isolation logic exits in a single cycle to conserve CPU.
-* **Entity Ghosting:** Culled entities are set to `solid = 0`. This reduces physics trace complexity and network overhead for dueling players.
-* **NPC Persistence:** Explicitly excludes `ET_NPC` from culling to ensure training bots/dummies remain visible to everyone.
-
-**Impact:** Significantly reduces snapshot size for the "Multiplayer Hive" by filtering data to only what is relevant to the combatants.
+* **The Problem:** At high player counts, the engine stalls to re-calculate compression trees (CPU Hitching), and original fragment limits create a "Wait List" for data, leading to "muddy" movement and connection interruptions.
+* **The Solution:** This build transitions to **Static High-Burst Networking**. It ensures the network pipe is wide enough to clear 32-player data bursts instantly while eliminating the CPU overhead of adaptive compression.
 
 ---
 
-## 2. Fragment Burst & 32-Player Scaling
-**Functions:** `SV_SendMessageToClient`, `SV_SendClientMessages`, `SV_SendClientGameState` (`sv_snapshot.cpp` / `sv_client.cpp`)
+## 1. Static Huffman Compression (CPU Efficiency)
+**Implementation:** `huffman_static.cpp` / `msg.cpp`
 
-* **2048 Fragment Burst Cap:** The absolute ceiling is raised to **2048 fragments**. This allows the server to clear a worst-case 32-player burst (~1,216 fragments) instantly in one frame.
-* **Zero-Wait Transmission:** By aligning the burst cap with the **49,152 MAX_MSGLEN**, the "Wait List" effect is eliminated. Data no longer waits for the next server heartbeat (25ms), removing the "muddy" lag.
-* **Integer-Based Pacing:** Uses fixed integer logic for fragment increments to prevent "handshake drift" and the broken `cg_showSnapshot` idling climb.
-* **Congestion Circuit-Breaker:** While wide enough for any legitimate MB2 spike, the 2048 cap still protects the VPS CPU from infinite-loop data floods or network exploits.
+* **Elimination of Adaptive Hitches:** Replaces the stock `msgHuff` adaptive tree with pre-computed Static Huffman lookup tables.
+* **Constant-Time Processing:** The server no longer spends CPU cycles "learning" frequency patterns or re-balancing trees during heavy combat. Compression time remains constant regardless of snapshot size.
+* **Surgical Bypass:** The system bypasses `Huff_addRef` and `Huff_Init` calls, removing the primary cause of server-side micro-stutters during player join/spawn events.
 
-**Impact:** Provides "Crisp Sync." Movement remains light even during 32-player saber clashes, as the network valve is now sized for the modern MB2 data load.
+## 2. Global Fragment Governor (4096 Safety)
+**Function:** `SV_SendClientMessages`, `SV_SendMessageToClient`, `SV_SendClientSnapshot`
+
+* **Global Burst Cap:** Introduces `totalFrameFragments` to track work done across all clients. The engine is capped at **4096 fragments per frame**.
+* **Anti-Hitch Protection:** If a massive burst of data (such as 32 players joining or a map restart) threatens to overwhelm the VPS CPU or the network buffer, the governor safely clips the data and defers it to the next frame.
+* **Congestion Control:** Prevents the "Packet Clumping" that causes players to teleport when the server tries to push too much data at once.
+
+## 3. Dedicated Server "Duel Isolation" (DuelCull)
+**Implementation:** `duel_cull.cpp` / `sv_snapshot.cpp`
+
+* **Intelligent Culling:** Automatically hides players from those involved in a private duel. This significantly reduces the data footprint for dueling players.
+* **Direct Pointer Passing:** Replaces slow internal table lookups with direct `playerState_t` pointer passing to keep physics and snapshot generation loops fast.
+* **NPC Persistence:** Ensures that `ET_NPC` (training dummies/bots) are never culled, maintaining visibility for all players.
+* **Performance Gate:** Controlled via `sv_snapShotDuelCull`. If disabled, the logic exits in a single cycle to save CPU.
+
+## 4. "Warm Cache" Snapshot Optimization
+**Function:** `SV_EmitPacketEntities`
+
+* **Byte-Level Comparison:** Uses `std::equal` to perform a lightning-fast memory check between the current and previous entity states.
+* **Delta Efficiency:** If an entity (like a player standing still) hasn't changed at the byte level, the engine writes a single "no change" bit and skips the field-by-field delta calculation. This maximizes the headroom within the 49,152 `MAX_MSGLEN` buffer.
+
+## 5. Engine-Side Logging
+**Function:** `SV_LogPrintf` / `GVM_LogPrintf`
+
+* **Direct I/O:** Provides a bridge for the engine to write `DuelStart` and `DuelEnd` events directly to `games.log` or a custom log file (e.g., `duel-games.log`).
+* **Timestamp Accuracy:** Syncs logs with the engine's internal time (e.g., `3:09`) for precise match review.
+* **Reliability:** Uses `fflush` to ensure log data is preserved even in the event of a server-side physics crash.
 
 ---
 
-## 3. Snapshot Overflow & Logging
-**Function:** `SV_SendClientSnapshot` & `SV_LogPrintf` (`sv_snapshot.cpp` / `sv_main.cpp`)
-
-* **Engine-Side Logging:** Introduces `SV_LogPrintf`, allowing the engine to write `DuelStart` and `DuelEnd` events directly to `games.log` for admin review.
-* **Reliable I/O:** Employs direct file writing with `fflush` to ensure data is preserved even during rare server-side physics crashes.
-* **Jitter Prevention:** Skips snapshot generation if a client has pending fragments, preventing "packet clumping" that causes players to teleport.
-
-**Impact:** Prevents "Connection Interrupted" errors during high-data events (like multiple player deaths) and provides a reliable audit trail for tournament matches.
-
----
-
-### Implementation Notes
-Verified for **OpenJK/MB2** compatibility. By widening the fragment valve to **2048** and utilizing direct pointer passing for culling, the Absolute Build ensures that the network code is never the bottleneck in 32-player environments.
+### Implementation Summary
+Verified for **OpenJK/MB2** compatibility. By combining Static Huffman compression with a 4096 fragment governor and intelligent culling, the Absolute Build ensures that the networking stack is no longer the bottleneck in high-population, high-fidelity saber combat environments.
 
 
 # OpenJK
