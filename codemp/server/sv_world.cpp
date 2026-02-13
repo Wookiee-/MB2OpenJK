@@ -575,11 +575,6 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			continue;
 		}
 
-		// Pass the fetched 'ps' into DuelCull to keep physics checks fast
-		if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
-			continue;
-		}
-
 		// see if we should ignore this entity
 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
 			if ( touchlist[i] == clip->passEntityNum ) {
@@ -611,6 +606,11 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			{ //blah, hack
 				continue;
 			}
+		}
+
+		// Pass the fetched 'ps' into DuelCull to keep physics checks fast
+		if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
+			continue;
 		}
 
 		// if it doesn't have any brushes of a type we

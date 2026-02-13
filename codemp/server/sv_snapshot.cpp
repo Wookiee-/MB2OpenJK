@@ -25,8 +25,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon/cm_public.h"
 #include <algorithm>
 
-extern int totalFrameFragments;
-
 /*
 =============================================================================
 
@@ -734,19 +732,11 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	// packet fragmentation of initial snapshot.
 	while(client->state&&client->netchan.unsentFragments)
 	{
-		// NEW: Check the global budget before sending the next piece.
-        // This ensures a player joining doesn't hitch the server for everyone else.
-        if (totalFrameFragments >= 4096) {
-            break; 
-        }
 		// send additional message fragments if the last message
 		// was too large to send at once
 
 		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
 		SV_Netchan_TransmitNextFragment(&client->netchan);
-		
-		// Track the work done this frame
-        totalFrameFragments++;
 	}
 
 
@@ -846,11 +836,6 @@ void SV_SendClientSnapshot( client_t *client ) {
 		//rww - reusing this code here
 		while(client->state&&client->netchan.unsentFragments)
 		{
-			// NEW: Check the global budget before sending the next piece.
-			// This ensures a player joining doesn't hitch the server for everyone else.
-			if (totalFrameFragments >= 4096) {
-				break; 
-			}
 			// send additional message fragments if the last message
 			// was too large to send at once
 
@@ -858,7 +843,6 @@ void SV_SendClientSnapshot( client_t *client ) {
 			SV_Netchan_TransmitNextFragment(&client->netchan);
 			
 			// Track the work done this frame
-			totalFrameFragments++;
 		}
 
 		// record information about the message
@@ -936,18 +920,10 @@ void SV_SendClientMessages( void ) {
         // send additional message fragments if the last message
         // was too large to send at once
         if ( c->netchan.unsentFragments ) {
-            // NEW: Check global budget. If we are over 4096, skip this 
-            // fragment for now to prevent a CPU/Network hitch.
-            if (totalFrameFragments >= 4096) {
-                continue; 
-            }
-
             c->nextSnapshotTime = svs.time +
                 SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
             SV_Netchan_TransmitNextFragment( &c->netchan );
             
-            // Track work done
-            totalFrameFragments++;
 
             continue;
         }

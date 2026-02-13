@@ -37,7 +37,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include <algorithm>
 
 static void SV_CloseDownload( client_t *cl );
-extern int totalFrameFragments;
 
 /*
 =================
@@ -492,19 +491,11 @@ void SV_SendClientGameState( client_t *client ) {
 	// packet fragmentation of initial snapshot.
 	while(client->state&&client->netchan.unsentFragments)
 	{
-		// NEW: Check the global budget before sending the next piece.
-        // This ensures a player joining doesn't hitch the server for everyone else.
-        if (totalFrameFragments >= 4096) {
-            break; 
-        }
 		// send additional message fragments if the last message
 		// was too large to send at once
 
 		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
 		SV_Netchan_TransmitNextFragment(&client->netchan);
-		
-		// Track the work done this frame
-        totalFrameFragments++;
 	}
 
 	Com_DPrintf ("SV_SendClientGameState() for %s\n", client->name);
