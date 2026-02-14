@@ -547,6 +547,9 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 
 	num = SV_AreaEntities( clip->boxmins, clip->boxmaxs, touchlist, MAX_GENTITIES);
 
+	// Fetch the player state once for this trace
+    playerState_t *ps = (clip->passEntityNum >= 0 && clip->passEntityNum < MAX_CLIENTS) ? SV_GameClientNum(clip->passEntityNum) : NULL;
+
 	if ( clip->passEntityNum != ENTITYNUM_NONE ) {
 		passOwnerNum = ( SV_GentityNum( clip->passEntityNum ) )->r.ownerNum;
 		if ( passOwnerNum == ENTITYNUM_NONE ) {
@@ -566,6 +569,11 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			return;
 		}
 		touch = SV_GentityNum( touchlist[i] );
+
+
+		if ( !touch->r.contents && !touch->r.bmodel ) {
+			continue;
+		}
 
 		// see if we should ignore this entity
 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
@@ -600,6 +608,11 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			}
 		}
 
+		// Pass the fetched 'ps' into DuelCull to keep physics checks fast
+		if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
+			continue;
+		}
+
 		// if it doesn't have any brushes of a type we
 		// are looking for, ignore it
 		if ( ! ( clip->contentmask & touch->r.contents ) ) {
@@ -611,13 +624,6 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			continue;
 		}
 
-        // Fetch the player state once for this trace
-        playerState_t *ps = SV_GameClientNum(clip->passEntityNum);
-
-        // Pass the fetched 'ps' into DuelCull to keep physics checks fast
-        if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
-            continue;
-        }
 		// might intersect, so do an exact clip
 		clipHandle = SV_ClipHandleForEntity (touch);
 
@@ -758,18 +764,26 @@ Ghoul2 Insert Start
 			}
 #endif
 
-			if (com_optvehtrace &&
-				com_optvehtrace->integer &&
-				touch->s.eType == ET_NPC &&
-				touch->s.NPC_class == CLASS_VEHICLE &&
-				touch->m_pVehicle)
-			{ //for vehicles cache the transform data.
-				re->G2API_CollisionDetectCache(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), angles, touch->r.currentOrigin, sv.time, touch->s.number, clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 0, clip->useLod, fRadius);
-			}
-			else
-			{
-				re->G2API_CollisionDetect(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), angles, touch->r.currentOrigin, sv.time, touch->s.number, clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 0, clip->useLod, fRadius);
-			}
+			// Engine Optimization: Enable caching for both vehicles AND players.
+            // This reuses bone math calculated earlier in the frame to kill the "tiny skip."
+            if (com_optvehtrace && com_optvehtrace->integer && 
+               (touch->m_pVehicle || touch->s.eType == ET_PLAYER || touch->s.eType == 14 || (touch->s.eFlags & EF_DEAD))) 
+            { 
+                // Using DetectCache prevents the CPU from re-calculating the skeleton 
+                // for every single trace that hits this player in the same frame.
+                re->G2API_CollisionDetectCache(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), 
+                    angles, touch->r.currentOrigin, sv.time, touch->s.number, 
+                    clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 
+                    0, clip->useLod, fRadius);
+            }
+            else
+            {
+                // Standard path for other entities (NPCs, etc.)
+                re->G2API_CollisionDetect(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), 
+                    angles, touch->r.currentOrigin, sv.time, touch->s.number, 
+                    clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 
+                    0, clip->useLod, fRadius);
+            }
 
 			tN = 0;
 			while (tN < MAX_G2_COLLISIONS)
