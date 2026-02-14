@@ -21,6 +21,12 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, see <http://www.gnu.org/licenses/>.
 ===========================================================================
 */
+#ifdef _WIN32
+    #include <windows.h>
+#else
+    #include <unistd.h>
+#endif
+
 #include <stdio.h>
 #include <time.h>
 #include "server.h"
@@ -29,7 +35,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "sv_gameapi.h"
 #include <unordered_map>
 #include <string>
-#include <vector>
 
 serverStatic_t	svs;				// persistant server info
 server_t		sv;					// local server
@@ -80,6 +85,7 @@ cvar_t	*sv_snapShotDuelCull;
 
 serverBan_t serverBans[SERVER_MAXBANS];
 int serverBansCount = 0;
+FILE *duelLog = NULL;
 
 /*
 =============================================================================
@@ -88,9 +94,6 @@ EVENT MESSAGES
 
 =============================================================================
 */
-
-#include <unordered_map>
-#include <string>
 
 // Global map to store model name -> relative engine path
 static std::unordered_map<std::string, std::string> modelLocationMap;
@@ -1162,6 +1165,39 @@ void SV_CheckCvars( void ) {
 	}
 }
 
+void SV_FramePacing( int frameMsec ) {
+    static int nextFrameTime = 0;
+    int now;
+
+    if ( nextFrameTime == 0 ) {
+        nextFrameTime = Sys_Milliseconds();
+    }
+
+    while ( 1 ) {
+        now = Sys_Milliseconds();
+
+        if ( now >= nextFrameTime ) {
+            break;
+        }
+
+        // Cross-platform sleep/yield/spin logic
+        if ( nextFrameTime - now > 2 ) {
+            Sys_Sleep( 1 ); 
+        } 
+        else if ( nextFrameTime - now > 1 ) {
+            Sys_Sleep( 0 );
+        }
+        else {
+            #ifdef _WIN32
+                YieldProcessor(); 
+            #else
+                __builtin_ia32_pause(); 
+            #endif
+        }
+    }
+    nextFrameTime += frameMsec;
+}
+
 /*
 ==================
 SV_FrameMsec
@@ -1224,6 +1260,9 @@ void SV_Frame( int msec ) {
 		Cvar_Set("timescale", va("%f", sv_fps->integer / 1000.0f));
 		frameMsec = 1;
 	}
+
+	// CALL THE PACER HERE
+    SV_FramePacing( frameMsec );
 
 	sv.timeResidual += msec;
 
@@ -1320,12 +1359,6 @@ void SV_LogPrintf( const char *fmt, ... ) {
     va_list     argptr;
     static char text[1024];
     static char timestampedText[1150];
-    const char  *logName;
-    
-    // 1. Calculate Engine Time (Matches the 3:09 format)
-    int seconds = svs.time / 1000;
-    int mins = seconds / 60;
-    int secs = seconds % 60;
 
     va_start (argptr, fmt);
     Q_vsnprintf (text, sizeof(text), fmt, argptr);
@@ -1333,33 +1366,34 @@ void SV_LogPrintf( const char *fmt, ... ) {
 
     if ( !text[0] ) return;
 
-    // 2. Format with exact engine spacing
-    Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", mins, secs, text);
+    // 1. PERFORMANCE GATE: Exit before doing ANY math or lookups
+    if (!strstr(text, "DuelStart") && !strstr(text, "DuelEnd")) {
+        return; 
+    }
 
-    // 3. Output to Console
-    Com_Printf( "%s", timestampedText );
+    // 2. TIME CALCULATION: svs.time is already in the engine, use it directly.
+    int seconds = svs.time / 1000;
+    Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", seconds / 60, seconds % 60, text);
 
-    logName = Cvar_VariableString( "g_log" ); // This should be "duel-games.log"
-    if ( !logName || !logName[0] ) return;
+    // 3. CONSOLE OUTPUT
+    Com_Printf("%s", timestampedText);
 
-    // --- DIRECT FILE WRITING (Reliable for Linux & Windows) ---
-    char fullPath[MAX_OSPATH];
-    const char *homePath = Cvar_VariableString("fs_homepath");
-
-    if (homePath && homePath[0]) {
-        // Construct the path manually to avoid Engine VFS issues
-        // This will result in: /home/mbiiez/openjk/MBII/duel-games.log
-        Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
+    // 4. PERSISTENT FILE WRITING (The "Zero-Syscall" approach)
+    if (!duelLog) {
+        char fullPath[MAX_OSPATH];
+        const char *homePath = Cvar_VariableString("fs_homepath");
+        const char *logName = Cvar_VariableString("g_log");
         
-        FILE *f = fopen(fullPath, "a");
-        if (f) {
-            fprintf(f, "%s", timestampedText);
-            fflush(f); 
-            fclose(f);
-        } else {
-            // If it fails, print a warning to the server console so you know why
-            Com_Printf("ERROR: Could not write to log file at %s\n", fullPath);
+        if (homePath && homePath[0] && logName && logName[0]) {
+            Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
+            duelLog = fopen(fullPath, "a");
         }
+    }
+
+    if (duelLog) {
+        fputs(timestampedText, duelLog); // Faster than fprintf for simple strings
+        // Remove fflush(duelLog) to let the OS buffer the writes. 
+        // The OS will write to disk when it has a spare moment.
     }
 }
 //============================================================================

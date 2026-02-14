@@ -29,6 +29,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "qcommon/stringed_ingame.h"
 #include "sv_gameapi.h"
 
+extern FILE *duelLog; // Tell the compiler this exists in your other file
+
 /*
 ===============
 SV_SendConfigstring
@@ -1083,6 +1085,10 @@ void SV_Shutdown( char *finalmsg )
 		return;
 	}
 
+    if (duelLog) {
+        fclose(duelLog);
+        duelLog = NULL;
+    }
 //	Com_Printf( "----- Server Shutdown -----\n" );
 
 	if ( svs.clients && !com_errorEntered ) {

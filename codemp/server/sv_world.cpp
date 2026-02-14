@@ -767,7 +767,7 @@ Ghoul2 Insert Start
 			// Engine Optimization: Enable caching for both vehicles AND players.
             // This reuses bone math calculated earlier in the frame to kill the "tiny skip."
             if (com_optvehtrace && com_optvehtrace->integer && 
-               (touch->m_pVehicle || touch->s.eType == ET_PLAYER)) 
+               (touch->m_pVehicle || touch->s.eType == ET_PLAYER || touch->s.eType == 14 || (touch->s.eFlags & EF_DEAD))) 
             { 
                 // Using DetectCache prevents the CPU from re-calculating the skeleton 
                 // for every single trace that hits this player in the same frame.
