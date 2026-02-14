@@ -764,18 +764,26 @@ Ghoul2 Insert Start
 			}
 #endif
 
-			if (com_optvehtrace &&
-				com_optvehtrace->integer &&
-				touch->s.eType == ET_NPC &&
-				touch->s.NPC_class == CLASS_VEHICLE &&
-				touch->m_pVehicle)
-			{ //for vehicles cache the transform data.
-				re->G2API_CollisionDetectCache(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), angles, touch->r.currentOrigin, sv.time, touch->s.number, clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 0, clip->useLod, fRadius);
-			}
-			else
-			{
-				re->G2API_CollisionDetect(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), angles, touch->r.currentOrigin, sv.time, touch->s.number, clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 0, clip->useLod, fRadius);
-			}
+			// Engine Optimization: Enable caching for both vehicles AND players.
+            // This reuses bone math calculated earlier in the frame to kill the "tiny skip."
+            if (com_optvehtrace && com_optvehtrace->integer && 
+               (touch->m_pVehicle || touch->s.eType == ET_PLAYER)) 
+            { 
+                // Using DetectCache prevents the CPU from re-calculating the skeleton 
+                // for every single trace that hits this player in the same frame.
+                re->G2API_CollisionDetectCache(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), 
+                    angles, touch->r.currentOrigin, sv.time, touch->s.number, 
+                    clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 
+                    0, clip->useLod, fRadius);
+            }
+            else
+            {
+                // Standard path for other entities (NPCs, etc.)
+                re->G2API_CollisionDetect(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), 
+                    angles, touch->r.currentOrigin, sv.time, touch->s.number, 
+                    clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 
+                    0, clip->useLod, fRadius);
+            }
 
 			tN = 0;
 			while (tN < MAX_G2_COLLISIONS)
