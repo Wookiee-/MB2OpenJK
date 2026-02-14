@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "ghoul2/ghoul2_shared.h"
 #include "sv_gameapi.h"
+#include <unordered_map>
+#include <string>
 
 serverStatic_t	svs;				// persistant server info
 server_t		sv;					// local server
@@ -77,6 +79,7 @@ cvar_t	*sv_snapShotDuelCull;
 
 serverBan_t serverBans[SERVER_MAXBANS];
 int serverBansCount = 0;
+FILE *duelLog = NULL;
 
 /*
 =============================================================================
@@ -85,6 +88,49 @@ EVENT MESSAGES
 
 =============================================================================
 */
+
+// Global map to store model name -> relative engine path
+static std::unordered_map<std::string, std::string> modelLocationMap;
+
+void SV_IndexAllModels() {
+    char		**filelist;
+    int			i, n;
+    const char	*basePath = "models/players";
+
+    // 1. Get a list of all folders in models/players (e.g., "luke", "reborn")
+    // The engine's FS_ListFiles automatically looks in base and MBII PK3s.
+    filelist = FS_ListFiles( basePath, "/", &n );
+
+    for ( i = 0 ; i < n ; i++ ) {
+        // Skip current/parent dir markers
+        if ( !filelist[i] || !Q_stricmp( filelist[i], "." ) || !Q_stricmp( filelist[i], ".." ) ) {
+            continue;
+        }
+
+        char subPath[MAX_OSPATH];
+        int numFiles;
+        
+        // Construct path: models/players/luke
+        Com_sprintf( subPath, sizeof( subPath ), "models/players/%s", filelist[i] );
+        
+        // 2. Look for .glm files inside that specific folder
+        char **subFiles = FS_ListFiles( subPath, ".glm", &numFiles );
+        
+        for ( int j = 0; j < numFiles; j++ ) {
+            char fullGLMPath[MAX_OSPATH];
+            
+            // Result: models/players/luke/model.glm
+            Com_sprintf(fullGLMPath, sizeof(fullGLMPath), "%s/%s", subPath, subFiles[j]);
+            
+            // Index it for instant lookup later
+            modelLocationMap[subFiles[j]] = fullGLMPath;
+        }
+        FS_FreeFileList( subFiles );
+    }
+    FS_FreeFileList( filelist );
+
+    Com_Printf("--- Engine Optimized: Indexed %zu models using Engine VFS ---\n", modelLocationMap.size());
+}
 
 /*
 ===============
@@ -1212,6 +1258,12 @@ void SV_Frame( int msec ) {
 		cvar_modifiedFlags &= ~CVAR_SYSTEMINFO;
 	}
 
+	static qboolean modelsIndexed = qfalse;
+    if (!modelsIndexed) {
+        SV_IndexAllModels(); // Call your low-RAM indexing function
+        modelsIndexed = qtrue;
+    }
+
 	if ( com_speeds->integer ) {
 		startTime = Sys_Milliseconds ();
 	} else {
@@ -1222,7 +1274,7 @@ void SV_Frame( int msec ) {
 	SV_CalcPings();
 
 	if (com_dedicated->integer) SV_BotFrame( sv.time );
-
+	
 	// run the game simulation in chunks
 	while ( sv.timeResidual >= frameMsec ) {
 		sv.timeResidual -= frameMsec;
@@ -1252,5 +1304,5 @@ void SV_Frame( int msec ) {
 	// send a heartbeat to the master if needed
 	SV_MasterHeartbeat();
 }
-
 //============================================================================
+
