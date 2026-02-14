@@ -21,6 +21,12 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, see <http://www.gnu.org/licenses/>.
 ===========================================================================
 */
+#ifdef _WIN32
+    #include <windows.h>
+#else
+    #include <unistd.h>
+#endif
+
 #include <stdio.h>
 #include <time.h>
 #include "server.h"
@@ -1159,6 +1165,39 @@ void SV_CheckCvars( void ) {
 	}
 }
 
+void SV_FramePacing( int frameMsec ) {
+    static int nextFrameTime = 0;
+    int now;
+
+    if ( nextFrameTime == 0 ) {
+        nextFrameTime = Sys_Milliseconds();
+    }
+
+    while ( 1 ) {
+        now = Sys_Milliseconds();
+
+        if ( now >= nextFrameTime ) {
+            break;
+        }
+
+        // Cross-platform sleep/yield/spin logic
+        if ( nextFrameTime - now > 2 ) {
+            Sys_Sleep( 1 ); 
+        } 
+        else if ( nextFrameTime - now > 1 ) {
+            Sys_Sleep( 0 );
+        }
+        else {
+            #ifdef _WIN32
+                YieldProcessor(); 
+            #else
+                __builtin_ia32_pause(); 
+            #endif
+        }
+    }
+    nextFrameTime += frameMsec;
+}
+
 /*
 ==================
 SV_FrameMsec
@@ -1221,6 +1260,9 @@ void SV_Frame( int msec ) {
 		Cvar_Set("timescale", va("%f", sv_fps->integer / 1000.0f));
 		frameMsec = 1;
 	}
+
+	// CALL THE PACER HERE
+    SV_FramePacing( frameMsec );
 
 	sv.timeResidual += msec;
 
