@@ -135,7 +135,18 @@ void SV_IndexAllModels() {
     }
     FS_FreeFileList( filelist );
 
-    Com_Printf("--- Engine Optimized: Indexed %zu models using Engine VFS ---\n", modelLocationMap.size());
+	// 3. MB2 PRE-CACHING LOOP
+	Com_Printf("--- MB2 Optimized: Pre-Caching %zu assets ---\n", modelLocationMap.size());
+
+	for (const auto& entry : modelLocationMap) {
+		fileHandle_t f;
+		// qfalse ensures we only touch LOCAL files and don't trigger redirects
+		int len = FS_FOpenFileRead(entry.second.c_str(), &f, qfalse);
+		if (len > 0) {
+			FS_FCloseFile(f); // Close immediately; we only wanted to "warm" the OS cache
+		}
+	}
+	Com_Printf("--- Pre-Caching Complete. Server is ready for players. ---\n");
 }
 
 /*
