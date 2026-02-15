@@ -1372,29 +1372,30 @@ void SV_LogPrintf( const char *fmt, ... ) {
     static char timestampedText[1150];
 
     va_start (argptr, fmt);
-    Q_vsnprintf (text, sizeof(text), fmt, argptr);
+    int textLen = Q_vsnprintf (text, sizeof(text), fmt, argptr);
     va_end (argptr);
 
-    if ( !text[0] ) return;
+    if ( textLen <= 0 ) return;
 
-    // 1. PERFORMANCE GATE: Exit before doing ANY math or lookups
-    if (!strstr(text, "DuelStart") && !strstr(text, "DuelEnd")) {
+    // 1. ANNOUNCEMENTS: Print to console for HUD/Players
+    int seconds = svs.time / 1000;
+    int tsLen = Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", seconds / 60, seconds % 60, text);
+    Com_Printf("%s", timestampedText);
+
+    // 2. C++14 COMPATIBLE SEARCH:
+    // This works on Windows/Linux without needing the C++17 header.
+	bool isDuel = (Q_stristr(text, "DuelStart") || Q_stristr(text, "DuelEnd"));
+	bool isChat = (Q_stristr(text, "say") || Q_stristr(text, "SMOD smsay"));
+
+    if (!isDuel && !isChat) {
         return; 
     }
 
-    // 2. TIME CALCULATION: svs.time is already in the engine, use it directly.
-    int seconds = svs.time / 1000;
-    Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", seconds / 60, seconds % 60, text);
-
-    // 3. CONSOLE OUTPUT
-    Com_Printf("%s", timestampedText);
-
-    // 4. PERSISTENT FILE WRITING (The "Zero-Syscall" approach)
+    // 3. OPTIMIZED WRITING
     if (!duelLog) {
         char fullPath[MAX_OSPATH];
         const char *homePath = Cvar_VariableString("fs_homepath");
         const char *logName = Cvar_VariableString("g_log");
-        
         if (homePath && homePath[0] && logName && logName[0]) {
             Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
             duelLog = fopen(fullPath, "a");
@@ -1402,9 +1403,9 @@ void SV_LogPrintf( const char *fmt, ... ) {
     }
 
     if (duelLog) {
-        fputs(timestampedText, duelLog); // Faster than fprintf for simple strings
-        // Remove fflush(duelLog) to let the OS buffer the writes. 
-        // The OS will write to disk when it has a spare moment.
+        // Still use fwrite for speed and fflush for your Python script
+        std::fwrite(timestampedText, 1, tsLen, duelLog);
+        std::fflush(duelLog); 
     }
 }
 //============================================================================
