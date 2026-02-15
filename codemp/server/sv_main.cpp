@@ -135,7 +135,18 @@ void SV_IndexAllModels() {
     }
     FS_FreeFileList( filelist );
 
-    Com_Printf("--- Engine Optimized: Indexed %zu models using Engine VFS ---\n", modelLocationMap.size());
+	// 3. MB2 PRE-CACHING LOOP
+	Com_Printf("--- MB2 Optimized: Pre-Caching %zu assets ---\n", modelLocationMap.size());
+
+	for (const auto& entry : modelLocationMap) {
+		fileHandle_t f;
+		// qfalse ensures we only touch LOCAL files and don't trigger redirects
+		int len = FS_FOpenFileRead(entry.second.c_str(), &f, qfalse);
+		if (len > 0) {
+			FS_FCloseFile(f); // Close immediately; we only wanted to "warm" the OS cache
+		}
+	}
+	Com_Printf("--- Pre-Caching Complete. Server is ready for players. ---\n");
 }
 
 /*
@@ -1345,56 +1356,6 @@ void SV_Frame( int msec ) {
 
 	// send a heartbeat to the master if needed
 	SV_MasterHeartbeat();
-}
-
-/*
-==================
-SV_LogPrintf
-
-New bridge function to write directly to games.log from the engine side.
-==================
-*/
-
-void SV_LogPrintf( const char *fmt, ... ) {
-    va_list     argptr;
-    static char text[1024];
-    static char timestampedText[1150];
-
-    va_start (argptr, fmt);
-    Q_vsnprintf (text, sizeof(text), fmt, argptr);
-    va_end (argptr);
-
-    if ( !text[0] ) return;
-
-    // 1. PERFORMANCE GATE: Exit before doing ANY math or lookups
-    if (!strstr(text, "DuelStart") && !strstr(text, "DuelEnd")) {
-        return; 
-    }
-
-    // 2. TIME CALCULATION: svs.time is already in the engine, use it directly.
-    int seconds = svs.time / 1000;
-    Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", seconds / 60, seconds % 60, text);
-
-    // 3. CONSOLE OUTPUT
-    Com_Printf("%s", timestampedText);
-
-    // 4. PERSISTENT FILE WRITING (The "Zero-Syscall" approach)
-    if (!duelLog) {
-        char fullPath[MAX_OSPATH];
-        const char *homePath = Cvar_VariableString("fs_homepath");
-        const char *logName = Cvar_VariableString("g_log");
-        
-        if (homePath && homePath[0] && logName && logName[0]) {
-            Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
-            duelLog = fopen(fullPath, "a");
-        }
-    }
-
-    if (duelLog) {
-        fputs(timestampedText, duelLog); // Faster than fprintf for simple strings
-        // Remove fflush(duelLog) to let the OS buffer the writes. 
-        // The OS will write to disk when it has a spare moment.
-    }
 }
 //============================================================================
 
