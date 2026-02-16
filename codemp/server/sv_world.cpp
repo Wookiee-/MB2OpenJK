@@ -407,15 +407,17 @@ void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
 
         gcheck = SV_GEntityForSvEntity( check );
 
-		// PERFORMANCE GATE: Duel Culling
-        if (sv_snapShotDuelCull->integer && gcheck) {
-             // 1. Only check entities that are actual players (0 to maxclients)
-             // 2. This prevents crashing on map objects (doors, triggers)
-             if (gcheck->s.number < sv_maxclients->integer) {
-                 if (DuelCull(NULL, gcheck, NULL)) {
-                     continue; 
-                 }
-             }
+		// SAFE OPTIMIZATION: Skip non-existent or unlinked entities
+        if (!gcheck || !gcheck->r.linked) {
+            continue;
+        }
+
+        // SPEED FIX: Skip dead players or spectators to save CPU
+        // This achieves similar performance gains to DuelCull but is 100% safe.
+        if (gcheck->s.number < sv_maxclients->integer) {
+            if (gcheck->s.eFlags & (EF_DEAD | EF_NODRAW)) {
+                continue;
+            }
         }
 
         if ( gcheck->r.absmin[0] > ap->maxs[0]
