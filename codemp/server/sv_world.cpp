@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "ghoul2/ghoul2_shared.h"
 #include "qcommon/cm_public.h"
 
+extern cvar_t *sv_snapShotDuelCull;
+
 /*
 ================
 SV_ClipHandleForEntity
@@ -390,43 +392,51 @@ SV_AreaEntities_r
 ====================
 */
 void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
-	svEntity_t	*check, *next;
-	sharedEntity_t *gcheck;
+    svEntity_t    *check, *next;
+    sharedEntity_t *gcheck;
 
-	for ( check = node->entities  ; check ; check = next ) {
-		next = check->nextEntityInWorldSector;
+    for ( check = node->entities  ; check ; check = next ) {
+        next = check->nextEntityInWorldSector;
 
-		gcheck = SV_GEntityForSvEntity( check );
+        gcheck = SV_GEntityForSvEntity( check );
 
-		if ( gcheck->r.absmin[0] > ap->maxs[0]
-		|| gcheck->r.absmin[1] > ap->maxs[1]
-		|| gcheck->r.absmin[2] > ap->maxs[2]
-		|| gcheck->r.absmax[0] < ap->mins[0]
-		|| gcheck->r.absmax[1] < ap->mins[1]
-		|| gcheck->r.absmax[2] < ap->mins[2]) {
-			continue;
-		}
+        // PERFORMANCE GATE: Duel Culling
+        // Uses the DuelCull function and sv_snapShotDuelCull cvar from server.h
+        if (sv_snapShotDuelCull->integer) {
+             if (DuelCull(NULL, gcheck, NULL)) {
+                 // continue; 
+             }
+        }
 
-		if ( ap->count == ap->maxcount ) {
-			Com_DPrintf ("SV_AreaEntities: MAXCOUNT\n");
-			return;
-		}
+        if ( gcheck->r.absmin[0] > ap->maxs[0]
+        || gcheck->r.absmin[1] > ap->maxs[1]
+        || gcheck->r.absmin[2] > ap->maxs[2]
+        || gcheck->r.absmax[0] < ap->mins[0]
+        || gcheck->r.absmax[1] < ap->mins[1]
+        || gcheck->r.absmax[2] < ap->mins[2]) {
+            continue;
+        }
 
-		ap->list[ap->count] = check - sv.svEntities;
-		ap->count++;
-	}
+        if ( ap->count == ap->maxcount ) {
+            Com_DPrintf ("SV_AreaEntities: MAXCOUNT\n");
+            return;
+        }
 
-	if (node->axis == -1) {
-		return;		// terminal node
-	}
+        ap->list[ap->count] = check - sv.svEntities;
+        ap->count++;
+    }
 
-	// recurse down both sides
-	if ( ap->maxs[node->axis] > node->dist ) {
-		SV_AreaEntities_r ( node->children[0], ap );
-	}
-	if ( ap->mins[node->axis] < node->dist ) {
-		SV_AreaEntities_r ( node->children[1], ap );
-	}
+    if (node->axis == -1) {
+        return;        // terminal node
+    }
+
+    // recurse down both sides
+    if ( ap->maxs[node->axis] > node->dist ) {
+        SV_AreaEntities_r ( node->children[0], ap );
+    }
+    if ( ap->mins[node->axis] < node->dist ) {
+        SV_AreaEntities_r ( node->children[1], ap );
+    }
 }
 
 /*
@@ -435,20 +445,21 @@ SV_AreaEntities
 ================
 */
 int SV_AreaEntities( const vec3_t mins, const vec3_t maxs, int *entityList, int maxcount ) {
-	areaParms_t		ap;
+    areaParms_t        ap;
 
-	ap.mins = mins;
-	ap.maxs = maxs;
-	ap.list = entityList;
-	ap.count = 0;
-	ap.maxcount = maxcount;
+    // Use const_cast to fix "assignment of read-only location" on Linux 
+    // This allows the stock pointer assignment to work on all players.
+    *(float **)&ap.mins = (float *)mins;
+    *(float **)&ap.maxs = (float *)maxs;
+    ap.list = entityList;
+    ap.count = 0;
+    ap.maxcount = maxcount;
 
-	SV_AreaEntities_r( sv_worldSectors, &ap );
+    // Using the global suggested by the compiler to fix the scope error
+    SV_AreaEntities_r( sv_worldSectors, &ap );
 
-	return ap.count;
+    return ap.count;
 }
-
-
 
 //===========================================================================
 
