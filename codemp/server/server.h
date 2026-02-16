@@ -317,7 +317,6 @@ void SV_RemoveOperatorCommands (void);
 void SV_MasterHeartbeat (void);
 void SV_MasterShutdown (void);
 
-void SV_FramePacing( int frameMsec );
 void SV_LogPrintf( const char *fmt, ... );
 
 

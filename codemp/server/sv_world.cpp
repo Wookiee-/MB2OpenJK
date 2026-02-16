@@ -395,16 +395,26 @@ void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
     svEntity_t    *check, *next;
     sharedEntity_t *gcheck;
 
+    // FIX 1: THE CRASH SHIELD
+    // If the engine looks for a player outside the map, node will be NULL.
+    // Without this line, the server segfaults on 22+ player movement.
+    if ( !node ) {
+        return;
+    }
+
     for ( check = node->entities  ; check ; check = next ) {
         next = check->nextEntityInWorldSector;
 
         gcheck = SV_GEntityForSvEntity( check );
 
-        // PERFORMANCE GATE: Duel Culling
-        // Uses the DuelCull function and sv_snapShotDuelCull cvar from server.h
-        if (sv_snapShotDuelCull->integer) {
-             if (DuelCull(NULL, gcheck, NULL)) {
-                 // continue; 
+		// PERFORMANCE GATE: Duel Culling
+        if (sv_snapShotDuelCull->integer && gcheck) {
+             // 1. Only check entities that are actual players (0 to maxclients)
+             // 2. This prevents crashing on map objects (doors, triggers)
+             if (gcheck->s.number < sv_maxclients->integer) {
+                 if (DuelCull(NULL, gcheck, NULL)) {
+                     continue; 
+                 }
              }
         }
 
@@ -445,20 +455,17 @@ SV_AreaEntities
 ================
 */
 int SV_AreaEntities( const vec3_t mins, const vec3_t maxs, int *entityList, int maxcount ) {
-    areaParms_t        ap;
+	areaParms_t		ap;
 
-    // Use const_cast to fix "assignment of read-only location" on Linux 
-    // This allows the stock pointer assignment to work on all players.
-    *(float **)&ap.mins = (float *)mins;
-    *(float **)&ap.maxs = (float *)maxs;
-    ap.list = entityList;
-    ap.count = 0;
-    ap.maxcount = maxcount;
+	ap.mins = mins;
+	ap.maxs = maxs;
+	ap.list = entityList;
+	ap.count = 0;
+	ap.maxcount = maxcount;
 
-    // Using the global suggested by the compiler to fix the scope error
-    SV_AreaEntities_r( sv_worldSectors, &ap );
+	SV_AreaEntities_r( sv_worldSectors, &ap );
 
-    return ap.count;
+	return ap.count;
 }
 
 //===========================================================================

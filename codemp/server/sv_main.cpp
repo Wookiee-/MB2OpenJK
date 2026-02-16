@@ -1176,39 +1176,6 @@ void SV_CheckCvars( void ) {
 	}
 }
 
-void SV_FramePacing( int frameMsec ) {
-    static int nextFrameTime = 0;
-    int now;
-
-    if ( nextFrameTime == 0 ) {
-        nextFrameTime = Sys_Milliseconds();
-    }
-
-    while ( 1 ) {
-        now = Sys_Milliseconds();
-
-        if ( now >= nextFrameTime ) {
-            break;
-        }
-
-        // Cross-platform sleep/yield/spin logic
-        if ( nextFrameTime - now > 2 ) {
-            Sys_Sleep( 1 ); 
-        } 
-        else if ( nextFrameTime - now > 1 ) {
-            Sys_Sleep( 0 );
-        }
-        else {
-            #ifdef _WIN32
-                YieldProcessor(); 
-            #else
-                __builtin_ia32_pause(); 
-            #endif
-        }
-    }
-    nextFrameTime += frameMsec;
-}
-
 /*
 ==================
 SV_FrameMsec
@@ -1272,9 +1239,6 @@ void SV_Frame( int msec ) {
 		frameMsec = 1;
 	}
 
-	// CALL THE PACER HERE
-    SV_FramePacing( frameMsec );
-
 	sv.timeResidual += msec;
 
 	if (!com_dedicated->integer) SV_BotFrame( sv.time + sv.timeResidual );
@@ -1311,12 +1275,6 @@ void SV_Frame( int msec ) {
 		cvar_modifiedFlags &= ~CVAR_SYSTEMINFO;
 	}
 
-	static qboolean modelsIndexed = qfalse;
-    if (!modelsIndexed) {
-        SV_IndexAllModels(); // Call your low-RAM indexing function
-        modelsIndexed = qtrue;
-    }
-
 	if ( com_speeds->integer ) {
 		startTime = Sys_Milliseconds ();
 	} else {
@@ -1327,7 +1285,7 @@ void SV_Frame( int msec ) {
 	SV_CalcPings();
 
 	if (com_dedicated->integer) SV_BotFrame( sv.time );
-	
+
 	// run the game simulation in chunks
 	while ( sv.timeResidual >= frameMsec ) {
 		sv.timeResidual -= frameMsec;
