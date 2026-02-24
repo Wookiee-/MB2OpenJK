@@ -395,31 +395,13 @@ void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
     svEntity_t    *check, *next;
     sharedEntity_t *gcheck;
 
-    // FIX 1: THE CRASH SHIELD
-    // If the engine looks for a player outside the map, node will be NULL.
-    // Without this line, the server segfaults on 22+ player movement.
-    if ( !node ) {
-        return;
-    }
+    if ( !node ) return; 
 
     for ( check = node->entities  ; check ; check = next ) {
         next = check->nextEntityInWorldSector;
-
         gcheck = SV_GEntityForSvEntity( check );
 
-		// SAFE OPTIMIZATION: Skip non-existent or unlinked entities
-        if (!gcheck || !gcheck->r.linked) {
-            continue;
-        }
-
-        // SPEED FIX: Skip dead players or spectators to save CPU
-        // This achieves similar performance gains to DuelCull but is 100% safe.
-        if (gcheck->s.number < sv_maxclients->integer) {
-            if (gcheck->s.eFlags & (EF_DEAD | EF_NODRAW)) {
-                continue;
-            }
-        }
-
+        // Standard Bounding Box Check (KEEP THIS AS IS for hitbox accuracy)
         if ( gcheck->r.absmin[0] > ap->maxs[0]
         || gcheck->r.absmin[1] > ap->maxs[1]
         || gcheck->r.absmin[2] > ap->maxs[2]
@@ -439,10 +421,9 @@ void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
     }
 
     if (node->axis == -1) {
-        return;        // terminal node
+        return;
     }
 
-    // recurse down both sides
     if ( ap->maxs[node->axis] > node->dist ) {
         SV_AreaEntities_r ( node->children[0], ap );
     }
