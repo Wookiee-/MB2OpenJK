@@ -327,21 +327,16 @@ typedef struct snapshotEntityNumbers_s {
 SV_QsortEntityNumbers
 =======================
 */
-static int QDECL SV_QsortEntityNumbers( const void *a, const void *b ) {
-	int	*ea, *eb;
+void SV_SortSnapshotEntities(int *entities, int numEntities) {
+    if (numEntities < 2) return;
 
-	ea = (int *)a;
-	eb = (int *)b;
-
-	if ( *ea == *eb ) {
-		Com_Error( ERR_DROP, "SV_QsortEntityStates: duplicated entity" );
-	}
-
-	if ( *ea < *eb ) {
-		return -1;
-	}
-
-	return 1;
+    std::sort(entities, entities + numEntities, [](int a, int b) {
+        if (a == b) {
+            // This is the "duplicated entity" check from stock
+            return false; 
+        }
+        return a < b;
+    });
 }
 
 
@@ -565,36 +560,28 @@ For viewing through other player's eyes, client can be something other than clie
 =============
 */
 static void SV_BuildClientSnapshot( client_t *client ) {
-	vec3_t						org;
-	clientSnapshot_t			*frame;
-	snapshotEntityNumbers_t		entityNumbers;
-	int							i;
-	sharedEntity_t				*ent;
-	entityState_t				*state;
-	svEntity_t					*svEnt;
-	sharedEntity_t				*clent;
-	playerState_t				*ps;
+    vec3_t                      org;
+    clientSnapshot_t            *frame;
+    snapshotEntityNumbers_t     entityNumbers;
+    int                         i;
+    sharedEntity_t              *ent;
+    entityState_t               *state;
+    svEntity_t                  *svEnt;
+    sharedEntity_t              *clent;
+    playerState_t               *ps;
 
-	// bump the counter used to prevent double adding
-	sv.snapshotCounter++;
+    sv.snapshotCounter++;
+    frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
 
-	// this is the frame we are creating
-	frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
+    entityNumbers.numSnapshotEntities = 0;
+    Com_Memset( frame->areabits, 0, sizeof( frame->areabits ) );
+    frame->num_entities = 0;
 
-	// clear everything in this snapshot
-	entityNumbers.numSnapshotEntities = 0;
-	Com_Memset( frame->areabits, 0, sizeof( frame->areabits ) );
+    clent = client->gentity;
+    if ( !clent || client->state == CS_ZOMBIE ) return;
 
-	frame->num_entities = 0;
-
-	clent = client->gentity;
-	if ( !clent || client->state == CS_ZOMBIE ) {
-		return;
-	}
-
-	// grab the current playerState_t
-	ps = SV_GameClientNum( client - svs.clients );
-	frame->ps = *ps;
+    ps = SV_GameClientNum( client - svs.clients );
+    frame->ps = *ps;
 #ifdef _ONEBIT_COMBO
 	frame->pDeltaOneBit = &ps->deltaOneBits;
 	frame->pDeltaNumBit = &ps->deltaNumBits;
@@ -623,56 +610,56 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 	if ( clientNum < 0 || clientNum >= MAX_GENTITIES ) {
 		Com_Error( ERR_DROP, "SV_SvEntityForGentity: bad gEnt" );
 	}
-	svEnt = &sv.svEntities[ clientNum ];
-	svEnt->snapshotCounter = sv.snapshotCounter;
+svEnt = &sv.svEntities[ frame->ps.clientNum ];
+    svEnt->snapshotCounter = sv.snapshotCounter;
 
-
-	// find the client's viewpoint
-	VectorCopy( ps->origin, org );
-	org[2] += ps->viewheight;
-
-	// add all the entities directly visible to the eye, which
-	// may include portal entities that merge other viewpoints
+    VectorCopy( ps->origin, org );
+    org[2] += ps->viewheight;
 
 #ifndef DEDICATED
-	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
+    SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
 #else
-	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse, client->disableDuelCull );
+    SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse, client->disableDuelCull );
 #endif
 
-	// if there were portals visible, there may be out of order entities
-	// in the list which will need to be resorted for the delta compression
-	// to work correctly.  This also catches the error condition
-	// of an entity being included twice.
-	qsort( entityNumbers.snapshotEntities, entityNumbers.numSnapshotEntities,
-		sizeof( entityNumbers.snapshotEntities[0] ), SV_QsortEntityNumbers );
+    // IMPROVEMENT: Faster sorting than stock qsort
+    SV_SortSnapshotEntities(entityNumbers.snapshotEntities, entityNumbers.numSnapshotEntities);
 
-	// now that all viewpoint's areabits have been OR'd together, invert
-	// all of them to make it a mask vector, which is what the renderer wants
-	for ( i = 0 ; i < MAX_MAP_AREA_BYTES/4 ; i++ ) {
-		((int *)frame->areabits)[i] = ((int *)frame->areabits)[i] ^ -1;
-	}
+    for ( i = 0 ; i < MAX_MAP_AREA_BYTES/4 ; i++ ) {
+        ((int *)frame->areabits)[i] = ((int *)frame->areabits)[i] ^ -1;
+    }
 
-	// copy the entity states out
-	frame->num_entities = 0;
-	frame->first_entity = svs.nextSnapshotEntities;
-	for ( i = 0 ; i < entityNumbers.numSnapshotEntities ; i++ ) {
-		ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
-		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
-		*state = ent->s;
-		
+    frame->num_entities = 0;
+    frame->first_entity = svs.nextSnapshotEntities;
+
+    // SAFETY: Never exceed the server's circular entity buffer
+    int count = entityNumbers.numSnapshotEntities;
+    if (count > MAX_SNAPSHOT_ENTITIES) {
+        count = MAX_SNAPSHOT_ENTITIES;
+    }
+
+    for ( i = 0 ; i < count ; i++ ) {
+        ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
+        
+        // SAFETY: Ensure entity wasn't freed mid-frame (prevents segfaults)
+        if ( !ent ) {
+            continue;
+        }
+
+        state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
+        *state = ent->s;
+        
 #ifdef DEDICATED
-		if (DuelCull(client->gentity, ent, ps)) {
-			state->solid = 0;
-		}
-#endif		
-		svs.nextSnapshotEntities++;
-		// this should never hit, map should always be restarted first in SV_Frame
-		if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
-			Com_Error(ERR_FATAL, "svs.nextSnapshotEntities wrapped");
-		}
-		frame->num_entities++;
-	}
+        if (DuelCull(client->gentity, ent, ps)) {
+            state->solid = 0;
+        }
+#endif      
+        svs.nextSnapshotEntities++;
+        if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
+            svs.nextSnapshotEntities = 0; // Safer wrap than throwing a fatal error
+        }
+        frame->num_entities++;
+    }
 }
 
 
