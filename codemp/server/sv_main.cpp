@@ -99,54 +99,61 @@ EVENT MESSAGES
 static std::unordered_map<std::string, std::string> modelLocationMap;
 
 void SV_IndexAllModels() {
-    char		**filelist;
-    int			i, n;
-    const char	*basePath = "models/players";
+    // 1. IMPORTANT: Clear old map data to free RAM
+    modelLocationMap.clear();
+    
+    char        **filelist;
+    int         i, n;
+    const char  *basePath = "models/players";
 
-    // 1. Get a list of all folders in models/players (e.g., "luke", "reborn")
-    // The engine's FS_ListFiles automatically looks in base and MBII PK3s.
+    // 2. Automatically scan all folders
     filelist = FS_ListFiles( basePath, "/", &n );
+    if (!filelist) return;
 
     for ( i = 0 ; i < n ; i++ ) {
-        // Skip current/parent dir markers
-        if ( !filelist[i] || !Q_stricmp( filelist[i], "." ) || !Q_stricmp( filelist[i], ".." ) ) {
-            continue;
-        }
+        if ( !filelist[i] || !Q_stricmp( filelist[i], "." ) || !Q_stricmp( filelist[i], ".." ) ) continue;
 
         char subPath[MAX_OSPATH];
         int numFiles;
-        
-        // Construct path: models/players/luke
         Com_sprintf( subPath, sizeof( subPath ), "models/players/%s", filelist[i] );
         
-        // 2. Look for .glm files inside that specific folder
         char **subFiles = FS_ListFiles( subPath, ".glm", &numFiles );
-        
-        for ( int j = 0; j < numFiles; j++ ) {
-            char fullGLMPath[MAX_OSPATH];
-            
-            // Result: models/players/luke/model.glm
-            Com_sprintf(fullGLMPath, sizeof(fullGLMPath), "%s/%s", subPath, subFiles[j]);
-            
-            // Index it for instant lookup later
-            modelLocationMap[subFiles[j]] = fullGLMPath;
+        if (subFiles) {
+            for ( int j = 0; j < numFiles; j++ ) {
+                char fullGLMPath[MAX_OSPATH];
+                Com_sprintf(fullGLMPath, sizeof(fullGLMPath), "%s/%s", subPath, subFiles[j]);
+                modelLocationMap[subFiles[j]] = fullGLMPath;
+            }
+            FS_FreeFileList( subFiles );
         }
-        FS_FreeFileList( subFiles );
     }
     FS_FreeFileList( filelist );
 
-	// 3. MB2 PRE-CACHING LOOP
-	Com_Printf("--- MB2 Optimized: Pre-Caching %zu assets ---\n", modelLocationMap.size());
+    // 3. MB2 PRE-CACHING LOOP - RAM SAFETY LIMIT
+    Com_Printf("--- MB2 Optimizer: Found %zu total assets ---\n", modelLocationMap.size());
 
-	for (const auto& entry : modelLocationMap) {
-		fileHandle_t f;
-		// qfalse ensures we only touch LOCAL files and don't trigger redirects
-		int len = FS_FOpenFileRead(entry.second.c_str(), &f, qfalse);
-		if (len > 0) {
-			FS_FCloseFile(f); // Close immediately; we only wanted to "warm" the OS cache
-		}
-	}
-	Com_Printf("--- Pre-Caching Complete. Server is ready for players. ---\n");
+    int filesCached = 0;
+    long long totalBytesLoaded = 0;
+    // --- RAM SAFETY LIMIT (100MB per instance) ---
+    const long long MAX_BYTES_LIMIT = 100 * 1024 * 1024; 
+    // ---------------------------------------------
+
+    for (const auto& entry : modelLocationMap) {
+        fileHandle_t f;
+        int fileSize = FS_FOpenFileRead(entry.second.c_str(), &f, qfalse);
+        
+        if (fileSize > 0) {
+            // Check if adding this file exceeds our safe budget
+            if (totalBytesLoaded + fileSize < MAX_BYTES_LIMIT) {
+                FS_FCloseFile(f); 
+                totalBytesLoaded += fileSize;
+                filesCached++;
+            } else {
+                FS_FCloseFile(f); 
+            }
+        }
+    }
+    Com_Printf("--- Pre-Caching Complete. Cached %d files (%lld bytes) ---\n", filesCached, totalBytesLoaded);
 }
 
 /*
