@@ -156,7 +156,7 @@ qboolean	Sys_IsLANAddress (netadr_t adr);
 void		Sys_ShowIP(void);
 
 
-#define	MAX_MSGLEN					65536	// max length of a message, which may
+#define	MAX_MSGLEN				49152	// max length of a message, which may
 											// be fragmented into multiple packets
 
 //rww - 6/28/02 - Changed from 16384 to match sof2's. This does seem rather huge, but I guess it doesn't really hurt anything.
