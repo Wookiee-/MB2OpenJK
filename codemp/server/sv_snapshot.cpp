@@ -366,7 +366,7 @@ static void SV_AddEntToSnapshot( svEntity_t *svEnt, sharedEntity_t *gEnt, snapsh
 SV_AddEntitiesVisibleFromPoint
 ===============
 */
-float g_svCullDist = 4096.0f;
+float g_svCullDist = -1.0f;
 static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *frame,
 #ifndef DEDICATED
 									snapshotEntityNumbers_t *eNums, qboolean portal )
