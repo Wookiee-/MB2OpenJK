@@ -609,11 +609,7 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		if ((clip->contentmask == (MASK_SHOT|CONTENTS_LIGHTSABER) || clip->contentmask == MASK_SHOT) && (touch->r.contents > 0 && (touch->r.contents & CONTENTS_NOSHOT)))
 		{
 			continue;
-		}
-
-		if (DuelCull(SV_GentityNum(clip->passEntityNum), touch)) {
-			continue;
-		}		
+		}	
 
 		// might intersect, so do an exact clip
 		clipHandle = SV_ClipHandleForEntity (touch);

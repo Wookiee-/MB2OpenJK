@@ -7,82 +7,80 @@ static qboolean oldDuelState[MAX_CLIENTS] = { qfalse };
 static int      duelOpponent[MAX_CLIENTS] = { 0 };
 
 static qboolean isPlayer(sharedEntity_t *ent) {
-	if (ent->s.eType == ET_PLAYER)
-		return qtrue;
-
-	return qfalse;
+    return (ent->s.eType == ET_PLAYER) ? qtrue : qfalse;
 }
 
-// Helper to extract clean names
+// Helper to resolve missiles/events back to their owner
+static sharedEntity_t *FlattenEntity(sharedEntity_t *ent) {
+    if (!ent) return NULL;
+
+    // Handle Thrown Sabers/Projectiles
+    if (ent->s.eType == ET_MISSILE) {
+        return SV_GentityNum(ent->r.ownerNum);
+    }
+    
+    // Handle Saber Block/Hit Events (translates event to the player)
+    if (ent->s.eType >= ET_EVENTS) {
+        int owner = (ent->s.otherEntityNum2 == ENTITYNUM_NONE) ? ent->s.otherEntityNum : ent->s.otherEntityNum2;
+        // Fallback to clientNum for certain player events
+        if (owner < 0 || owner >= MAX_GENTITIES) {
+            owner = ent->s.clientNum;
+        }
+        return SV_GentityNum(owner);
+    }
+
+    return ent;
+}
+
+// Helper to extract clean names for logging
 static void GetPlayerName(int clientNum, char *outName, int maxSize) {
-	char configstring[MAX_CONFIGSTRINGS];
-	const char *value;
+    char configstring[MAX_CONFIGSTRINGS];
+    const char *value;
 
-	if (clientNum < 0 || clientNum >= MAX_CLIENTS) {
-		Q_strncpyz(outName, "Unknown", maxSize);
-		return;
-	}
+    if (clientNum < 0 || clientNum >= MAX_CLIENTS) {
+        Q_strncpyz(outName, "Unknown", maxSize);
+        return;
+    }
 
-	// 1. Try to get the name from Configstrings (The standard way)
-	SV_GetConfigstring(CS_PLAYERS + clientNum, configstring, sizeof(configstring));
-	value = Info_ValueForKey(configstring, "n");
+    SV_GetConfigstring(CS_PLAYERS + clientNum, configstring, sizeof(configstring));
+    value = Info_ValueForKey(configstring, "n");
 
-	// 2. If configstring is empty or generic, check the engine's direct client record
-	// svs.clients is globally available via server.h
-	if (!value || !value[0]) {
-		client_t *cl = &svs.clients[clientNum];
-		if (cl && cl->name[0]) {
-			value = cl->name;
-		}
-	}
+    if (!value || !value[0]) {
+        client_t *cl = &svs.clients[clientNum];
+        if (cl && cl->name[0]) value = cl->name;
+    }
 
-	if (value && value[0]) {
-		char cleanName[MAX_NETNAME];
-		Q_strncpyz(cleanName, value, sizeof(cleanName));
-		
-		// 3. Strip color codes (e.g., ^1, ^7) for the log file
-		Q_CleanStr(cleanName); 
-		
-		Q_strncpyz(outName, cleanName, maxSize);
-	} else {
-		// Final fallback if absolutely no name is found
-		Com_sprintf(outName, maxSize, "Player %d", clientNum);
-	}
+    if (value && value[0]) {
+        char cleanName[MAX_NETNAME];
+        Q_strncpyz(cleanName, value, sizeof(cleanName));
+        Q_CleanStr(cleanName); 
+        Q_strncpyz(outName, cleanName, maxSize);
+    } else {
+        Com_sprintf(outName, maxSize, "Player %d", clientNum);
+    }
 }
 
 int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
-    // --- 1. PERFORMANCE GATE ---
-    // If the feature is off, exit immediately to save CPU for all players.
-    if (!sv_snapShotDuelCull->integer) {
-        return 0;
-    }
+    if (!sv_snapShotDuelCull->integer) return 0;
+
+    // Resolve 'touch' to its owner (e.g., saber missile -> player owner)
+    sharedEntity_t *resolvedTouch = FlattenEntity(touch);
+    if (!resolvedTouch) return 0;
 
     int entNum = ent->s.number;
+    playerState_t *ps = (entNum >= 0 && entNum < MAX_CLIENTS) ? SV_GameClientNum(entNum) : NULL;
 
-    // --- 2. INTERNAL STATE FETCH ---
-    // Instead of passing 'ps' from the engine, we fetch it here.
-    // This allows us to revert sv_snapshot and sv_world to their stock calls.
-    playerState_t *ps = NULL;
-    if (entNum >= 0 && entNum < MAX_CLIENTS) {
-        ps = SV_GameClientNum(entNum);
-    }
-
-    // --- 3. LOGGING MODIFICATIONS (State-Locked) ---
+    // --- 1. LOGGING LOGIC ---
     if (ps && isPlayer(ent)) {
         qboolean isCurrentlyDueling = ps->duelInProgress ? qtrue : qfalse;
 
-        // START TRIGGER: Log when the duel begins
         if (isCurrentlyDueling && !oldDuelState[entNum]) {
             int myOpponentIdx = ps->duelIndex; 
-
             if (myOpponentIdx >= 0 && myOpponentIdx < MAX_CLIENTS && myOpponentIdx != entNum) {
                 playerState_t *oppPs = SV_GameClientNum(myOpponentIdx);
-
-                // RECIPROCITY CHECK: Ensure both are locked to each other
                 if (oppPs && oppPs->duelInProgress && oppPs->duelIndex == entNum) {
                     oldDuelState[entNum] = qtrue;
                     duelOpponent[entNum] = myOpponentIdx;
-
                     if (entNum < myOpponentIdx) {
                         char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
                         GetPlayerName(entNum, p1Name, sizeof(p1Name));
@@ -92,16 +90,13 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
                 }
             }
         }
-        // END TRIGGER: Log when the duel ends
         else if (!isCurrentlyDueling && oldDuelState[entNum]) {
             if (ps->stats[STAT_HEALTH] > 1) {
                 int loserIdx = duelOpponent[entNum];
-                
                 if (loserIdx >= 0 && loserIdx < MAX_CLIENTS) {
                     char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
                     GetPlayerName(entNum, winnerName, sizeof(winnerName));
                     GetPlayerName(loserIdx, loserName, sizeof(loserName));
-
                     GVM_LogPrintf("DuelEnd: %s has defeated %s in a private duel\n", winnerName, loserName);
                 }
             }
@@ -110,48 +105,33 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
         }
     }
 
-    // --- 4. TYPE & SAFETY CHECKS ---
-    // Handle Thrown Sabers: Fixes the 'snap-back' bug during duels
-    if (touch->s.eType == ET_MISSILE) {
-        if (ps && ps->duelInProgress) {
-            // Only remain solid for the duel opponent
-            if (touch->s.otherEntityNum != ps->duelIndex) {
-                return 2; // Ghost for spectators
-            }
-        }
-        return 0; // Solid for opponent and regular play
+    // --- 2. CULLING LOGIC ---
+    
+    // Safety: Always keep map objects solid
+    if (resolvedTouch->s.eType != ET_PLAYER && resolvedTouch->s.eType != ET_NPC) {
+        return 0;
     }
 
-    // Safety Net: Map objects (doors, floors, triggers) are always solid
-    if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
-        return 0; 
-    }
+    int touchOwnerNum = resolvedTouch->s.number;
 
-    int touchNum = touch->s.number;
-
-    // --- 5. CULLING LOGIC ---
-
-    // NPC/DUMMY LOGIC:
-    if (touch->s.eType == ET_NPC) {
-        // If the viewer is dueling, HIDE the dummy to clear the arena
-        if (ps && ps->duelInProgress) {
-            return 1; 
-        }
-        // For bystanders, the dummy is solid and visible
-        return 0; 
-    }
-
-    // DUELIST LOGIC: If viewer is dueling, ghost everyone except their opponent
+    // DUELIST PERSPECTIVE
     if (ps && ps->duelInProgress) {
-        if (ps->duelIndex != touchNum) {
-            return 2; // Ghost bystander
+        // If the 'touch' (or its owner) is our opponent, keep it solid
+        if (touchOwnerNum == ps->duelIndex) {
+            return 0; 
         }
-        return 0; // Solid opponent
+        
+        // Hide NPCs/Dummies during duels
+        if (resolvedTouch->s.eType == ET_NPC) return 1;
+
+        // Ghost everyone else
+        return 2;
     }
 
-    // BYSTANDER LOGIC: Ghost players who are currently dueling
-    if (touch->s.eType == ET_PLAYER) {
-        playerState_t *ops = SV_GameClientNum(touchNum);
+    // BYSTANDER PERSPECTIVE
+    // Ghost players (or their sabers) that are currently in a duel
+    if (resolvedTouch->s.eType == ET_PLAYER) {
+        playerState_t *ops = SV_GameClientNum(touchOwnerNum);
         if (ops && ops->duelInProgress) {
             return 2; 
         }
