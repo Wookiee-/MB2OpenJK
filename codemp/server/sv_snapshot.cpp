@@ -431,7 +431,7 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
 			}
 		}
 #ifdef DEDICATED
-		if (!skipDuelCull && DuelCull(SV_GentityNum(frame->ps.clientNum), ent, &frame->ps) == 1) {
+		if (!skipDuelCull && DuelCull(SV_GentityNum(frame->ps.clientNum), ent) == 1) {
 			continue;
 		}
 #endif
@@ -651,7 +651,7 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		*state = ent->s;
 		
 #ifdef DEDICATED
-	    if (DuelCull(client->gentity, ent, ps)) {
+		if (DuelCull(client->gentity, ent)) {
 			state->solid = 0;
 		}
 #endif		

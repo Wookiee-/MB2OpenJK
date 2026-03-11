@@ -50,7 +50,7 @@ static void GetPlayerName(int clientNum, char *outName, int maxSize) {
 	}
 }
 
-int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
+int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
     // --- 1. PERFORMANCE GATE ---
     // If the feature is off, exit immediately to save CPU for all players.
     if (!sv_snapShotDuelCull->integer) {
@@ -59,9 +59,16 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
 
     int entNum = ent->s.number;
 
-    // --- 2. LOGGING MODIFICATIONS (State-Locked) ---
-    // We use the 'ps' passed from the engine instead of calling GetPS(ent).
-    if (entNum >= 0 && entNum < MAX_CLIENTS && ps && isPlayer(ent)) {
+    // --- 2. INTERNAL STATE FETCH ---
+    // Instead of passing 'ps' from the engine, we fetch it here.
+    // This allows us to revert sv_snapshot and sv_world to their stock calls.
+    playerState_t *ps = NULL;
+    if (entNum >= 0 && entNum < MAX_CLIENTS) {
+        ps = SV_GameClientNum(entNum);
+    }
+
+    // --- 3. LOGGING MODIFICATIONS (State-Locked) ---
+    if (ps && isPlayer(ent)) {
         qboolean isCurrentlyDueling = ps->duelInProgress ? qtrue : qfalse;
 
         // START TRIGGER: Log when the duel begins
@@ -69,16 +76,13 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
             int myOpponentIdx = ps->duelIndex; 
 
             if (myOpponentIdx >= 0 && myOpponentIdx < MAX_CLIENTS && myOpponentIdx != entNum) {
-                // Fetch opponent's state once using the index
                 playerState_t *oppPs = SV_GameClientNum(myOpponentIdx);
 
                 // RECIPROCITY CHECK: Ensure both are locked to each other
                 if (oppPs && oppPs->duelInProgress && oppPs->duelIndex == entNum) {
-                    // LOCK: This prevents any more "Start" logs until the duel ends
                     oldDuelState[entNum] = qtrue;
                     duelOpponent[entNum] = myOpponentIdx;
 
-                    // ID FILTER: Only one side prints to avoid double-logging
                     if (entNum < myOpponentIdx) {
                         char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
                         GetPlayerName(entNum, p1Name, sizeof(p1Name));
@@ -90,7 +94,6 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
         }
         // END TRIGGER: Log when the duel ends
         else if (!isCurrentlyDueling && oldDuelState[entNum]) {
-            // MB2 Loser is set to 1 HP. Winner is > 1.
             if (ps->stats[STAT_HEALTH] > 1) {
                 int loserIdx = duelOpponent[entNum];
                 
@@ -102,20 +105,21 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
                     GVM_LogPrintf("DuelEnd: %s has defeated %s in a private duel\n", winnerName, loserName);
                 }
             }
-
-            // UNLOCK: Reset trackers so they can duel again
             oldDuelState[entNum] = qfalse;
             duelOpponent[entNum] = -1; 
         }
     }
 
-    // --- 3. TYPE & SAFETY CHECKS ---
-    // Handle Thrown Sabers: Fixes the 'return on block' bug
+    // --- 4. TYPE & SAFETY CHECKS ---
+    // Handle Thrown Sabers: Fixes the 'snap-back' bug during duels
     if (touch->s.eType == ET_MISSILE) {
-        if (ps && ps->duelInProgress && touch->s.otherEntityNum != ps->duelIndex) {
-            return 2; // Ghost the saber for anyone NOT in the duel
+        if (ps && ps->duelInProgress) {
+            // Only remain solid for the duel opponent
+            if (touch->s.otherEntityNum != ps->duelIndex) {
+                return 2; // Ghost for spectators
+            }
         }
-        return 0; // Keep saber solid for the opponent and regular play
+        return 0; // Solid for opponent and regular play
     }
 
     // Safety Net: Map objects (doors, floors, triggers) are always solid
@@ -125,7 +129,7 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
 
     int touchNum = touch->s.number;
 
-    // --- 4. CULLING LOGIC ---
+    // --- 5. CULLING LOGIC ---
 
     // NPC/DUMMY LOGIC:
     if (touch->s.eType == ET_NPC) {
