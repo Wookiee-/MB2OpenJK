@@ -110,20 +110,34 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
     }
 
     // --- 3. TYPE & SAFETY CHECKS ---
-    // Ignore non-living entities (missiles, items, doors)
-    if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
-        return 0; 
+    // Handle Thrown Sabers: Fixes the 'return on block' bug
+    if (touch->s.eType == ET_MISSILE) {
+        if (ps && ps->duelInProgress && touch->s.otherEntityNum != ps->duelIndex) {
+            return 2; // Ghost the saber for anyone NOT in the duel
+        }
+        return 0; // Keep saber solid for the opponent and regular play
     }
 
-    // NPCs are always solid (prevents ghosting training dummies)
-    if (touch->s.eType == ET_NPC) {
+    // Safety Net: Map objects (doors, floors, triggers) are always solid
+    if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
         return 0; 
     }
 
     int touchNum = touch->s.number;
 
     // --- 4. CULLING LOGIC ---
-    // DUELIST LOGIC: If 'ps' shows a duel, ghost everyone except opponent
+
+    // NPC/DUMMY LOGIC:
+    if (touch->s.eType == ET_NPC) {
+        // If the viewer is dueling, HIDE the dummy to clear the arena
+        if (ps && ps->duelInProgress) {
+            return 1; 
+        }
+        // For bystanders, the dummy is solid and visible
+        return 0; 
+    }
+
+    // DUELIST LOGIC: If viewer is dueling, ghost everyone except their opponent
     if (ps && ps->duelInProgress) {
         if (ps->duelIndex != touchNum) {
             return 2; // Ghost bystander
@@ -133,7 +147,6 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
 
     // BYSTANDER LOGIC: Ghost players who are currently dueling
     if (touch->s.eType == ET_PLAYER) {
-        // We only perform the lookup for the OTHER player
         playerState_t *ops = SV_GameClientNum(touchNum);
         if (ops && ops->duelInProgress) {
             return 2; 

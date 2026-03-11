@@ -23,7 +23,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 #include "qcommon/cm_public.h"
-#include <algorithm>
 
 /*
 =============================================================================
@@ -55,72 +54,63 @@ Writes a delta update of an entityState_t list to the message.
 =============
 */
 static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to, msg_t *msg ) {
-    entityState_t   *oldent, *newent;
-    int     oldindex, newindex;
-    int     oldnum, newnum;
-    int     from_num_entities;
+	entityState_t	*oldent, *newent;
+	int		oldindex, newindex;
+	int		oldnum, newnum;
+	int		from_num_entities;
 
-    // generate the delta update
-    if ( !from ) {
-        from_num_entities = 0;
-    } else {
-        from_num_entities = from->num_entities;
-    }
+	// generate the delta update
+	if ( !from ) {
+		from_num_entities = 0;
+	} else {
+		from_num_entities = from->num_entities;
+	}
 
-    newent = NULL;
-    oldent = NULL;
-    newindex = 0;
-    oldindex = 0;
+	newent = NULL;
+	oldent = NULL;
+	newindex = 0;
+	oldindex = 0;
+	while ( newindex < to->num_entities || oldindex < from_num_entities ) {
+		if ( newindex >= to->num_entities ) {
+			newnum = 9999;
+		} else {
+			newent = &svs.snapshotEntities[(to->first_entity+newindex) % svs.numSnapshotEntities];
+			newnum = newent->number;
+		}
 
-    while ( newindex < to->num_entities || oldindex < from_num_entities ) {
-        if ( newindex >= to->num_entities ) {
-            newnum = 9999;
-        } else {
-            newent = &svs.snapshotEntities[(to->first_entity+newindex) % svs.numSnapshotEntities];
-            newnum = newent->number;
-        }
+		if ( oldindex >= from_num_entities ) {
+			oldnum = 9999;
+		} else {
+			oldent = &svs.snapshotEntities[(from->first_entity+oldindex) % svs.numSnapshotEntities];
+			oldnum = oldent->number;
+		}
 
-        if ( oldindex >= from_num_entities ) {
-            oldnum = 9999;
-        } else {
-            oldent = &svs.snapshotEntities[(from->first_entity+oldindex) % svs.numSnapshotEntities];
-            oldnum = oldent->number;
-        }
+		if ( newnum == oldnum ) {
+			// delta update from old position
+			// because the force parm is qfalse, this will not result
+			// in any bytes being emited if the entity has not changed at all
+			MSG_WriteDeltaEntity (msg, oldent, newent, qfalse );
+			oldindex++;
+			newindex++;
+			continue;
+		}
 
-        if ( newnum == oldnum ) {
-            // PERFORMANCE: Fast memory-level comparison for 32 players
-            // Check if the entity has actually changed at the byte level
-            if ( std::equal((unsigned char*)oldent, (unsigned char*)oldent + sizeof(entityState_t), (unsigned char*)newent) ) {
-                // FIXED: To prevent CL_ParsePacketEntities, we call the standard delta function.
-                // By passing the same pointer twice (newent, newent), the engine 
-                // immediately writes the "no change" bits, keeping the client in sync.
-                MSG_WriteDeltaEntity(msg, newent, newent, qfalse); 
-            } else {
-                // Entities share an ID but data has changed (moved, fired, etc)
-                MSG_WriteDeltaEntity(msg, oldent, newent, qfalse);
-            }
+		if ( newnum < oldnum ) {
+			// this is a new entity, send it from the baseline
+			MSG_WriteDeltaEntity (msg, &sv.svEntities[newnum].baseline, newent, qtrue );
+			newindex++;
+			continue;
+		}
 
-            oldindex++;
-            newindex++;
-            continue;
-        }
-        
-        if ( newnum < oldnum ) {
-            // this is a new entity, send it from the baseline
-            MSG_WriteDeltaEntity (msg, &sv.svEntities[newnum].baseline, newent, qtrue );
-            newindex++;
-            continue;
-        }
+		if ( newnum > oldnum ) {
+			// the old entity isn't present in the new message
+			MSG_WriteDeltaEntity (msg, oldent, NULL, qtrue );
+			oldindex++;
+			continue;
+		}
+	}
 
-        if ( newnum > oldnum ) {
-            // the old entity isn't present in the new message
-            MSG_WriteDeltaEntity (msg, oldent, NULL, qtrue );
-            oldindex++;
-            continue;
-        }
-    }
-
-    MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );   // end of packetentities
+	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );	// end of packetentities
 }
 
 
@@ -147,7 +137,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 		client->deltaMessage = client->netchan.outgoingSequence;
 	}
 
-		// try to use a previous frame as the source for delta compressing the snapshot
+	// try to use a previous frame as the source for delta compressing the snapshot
 	if ( deltaMessage <= 0 || client->state != CS_ACTIVE ) {
 		// client is asking for a retransmit
 		oldframe = NULL;
@@ -214,7 +204,6 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
 	MSG_WriteByte (msg, lastframe);
 
 	snapFlags = svs.snapFlagServerBit;
-
 	if ( client->rateDelayed ) {
 		snapFlags |= SNAPFLAG_RATE_DELAYED;
 	}
@@ -327,16 +316,21 @@ typedef struct snapshotEntityNumbers_s {
 SV_QsortEntityNumbers
 =======================
 */
-void SV_SortSnapshotEntities(int *entities, int numEntities) {
-    if (numEntities < 2) return;
+static int QDECL SV_QsortEntityNumbers( const void *a, const void *b ) {
+	int	*ea, *eb;
 
-    std::sort(entities, entities + numEntities, [](int a, int b) {
-        if (a == b) {
-            // This is the "duplicated entity" check from stock
-            return false; 
-        }
-        return a < b;
-    });
+	ea = (int *)a;
+	eb = (int *)b;
+
+	if ( *ea == *eb ) {
+		Com_Error( ERR_DROP, "SV_QsortEntityStates: duplicated entity" );
+	}
+
+	if ( *ea < *eb ) {
+		return -1;
+	}
+
+	return 1;
 }
 
 
@@ -560,28 +554,36 @@ For viewing through other player's eyes, client can be something other than clie
 =============
 */
 static void SV_BuildClientSnapshot( client_t *client ) {
-    vec3_t                      org;
-    clientSnapshot_t            *frame;
-    snapshotEntityNumbers_t     entityNumbers;
-    int                         i;
-    sharedEntity_t              *ent;
-    entityState_t               *state;
-    svEntity_t                  *svEnt;
-    sharedEntity_t              *clent;
-    playerState_t               *ps;
+	vec3_t						org;
+	clientSnapshot_t			*frame;
+	snapshotEntityNumbers_t		entityNumbers;
+	int							i;
+	sharedEntity_t				*ent;
+	entityState_t				*state;
+	svEntity_t					*svEnt;
+	sharedEntity_t				*clent;
+	playerState_t				*ps;
 
-    sv.snapshotCounter++;
-    frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
+	// bump the counter used to prevent double adding
+	sv.snapshotCounter++;
 
-    entityNumbers.numSnapshotEntities = 0;
-    Com_Memset( frame->areabits, 0, sizeof( frame->areabits ) );
-    frame->num_entities = 0;
+	// this is the frame we are creating
+	frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
 
-    clent = client->gentity;
-    if ( !clent || client->state == CS_ZOMBIE ) return;
+	// clear everything in this snapshot
+	entityNumbers.numSnapshotEntities = 0;
+	Com_Memset( frame->areabits, 0, sizeof( frame->areabits ) );
 
-    ps = SV_GameClientNum( client - svs.clients );
-    frame->ps = *ps;
+	frame->num_entities = 0;
+
+	clent = client->gentity;
+	if ( !clent || client->state == CS_ZOMBIE ) {
+		return;
+	}
+
+	// grab the current playerState_t
+	ps = SV_GameClientNum( client - svs.clients );
+	frame->ps = *ps;
 #ifdef _ONEBIT_COMBO
 	frame->pDeltaOneBit = &ps->deltaOneBits;
 	frame->pDeltaNumBit = &ps->deltaNumBits;
@@ -610,56 +612,56 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 	if ( clientNum < 0 || clientNum >= MAX_GENTITIES ) {
 		Com_Error( ERR_DROP, "SV_SvEntityForGentity: bad gEnt" );
 	}
-svEnt = &sv.svEntities[ frame->ps.clientNum ];
-    svEnt->snapshotCounter = sv.snapshotCounter;
+	svEnt = &sv.svEntities[ clientNum ];
+	svEnt->snapshotCounter = sv.snapshotCounter;
 
-    VectorCopy( ps->origin, org );
-    org[2] += ps->viewheight;
+
+	// find the client's viewpoint
+	VectorCopy( ps->origin, org );
+	org[2] += ps->viewheight;
+
+	// add all the entities directly visible to the eye, which
+	// may include portal entities that merge other viewpoints
 
 #ifndef DEDICATED
-    SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
+	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
 #else
-    SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse, client->disableDuelCull );
+	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse, client->disableDuelCull );
 #endif
 
-    // IMPROVEMENT: Faster sorting than stock qsort
-    SV_SortSnapshotEntities(entityNumbers.snapshotEntities, entityNumbers.numSnapshotEntities);
+	// if there were portals visible, there may be out of order entities
+	// in the list which will need to be resorted for the delta compression
+	// to work correctly.  This also catches the error condition
+	// of an entity being included twice.
+	qsort( entityNumbers.snapshotEntities, entityNumbers.numSnapshotEntities,
+		sizeof( entityNumbers.snapshotEntities[0] ), SV_QsortEntityNumbers );
 
-    for ( i = 0 ; i < MAX_MAP_AREA_BYTES/4 ; i++ ) {
-        ((int *)frame->areabits)[i] = ((int *)frame->areabits)[i] ^ -1;
-    }
+	// now that all viewpoint's areabits have been OR'd together, invert
+	// all of them to make it a mask vector, which is what the renderer wants
+	for ( i = 0 ; i < MAX_MAP_AREA_BYTES/4 ; i++ ) {
+		((int *)frame->areabits)[i] = ((int *)frame->areabits)[i] ^ -1;
+	}
 
-    frame->num_entities = 0;
-    frame->first_entity = svs.nextSnapshotEntities;
-
-    // SAFETY: Never exceed the server's circular entity buffer
-    int count = entityNumbers.numSnapshotEntities;
-    if (count > MAX_SNAPSHOT_ENTITIES) {
-        count = MAX_SNAPSHOT_ENTITIES;
-    }
-
-    for ( i = 0 ; i < count ; i++ ) {
-        ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
-        
-        // SAFETY: Ensure entity wasn't freed mid-frame (prevents segfaults)
-        if ( !ent ) {
-            continue;
-        }
-
-        state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
-        *state = ent->s;
-        
+	// copy the entity states out
+	frame->num_entities = 0;
+	frame->first_entity = svs.nextSnapshotEntities;
+	for ( i = 0 ; i < entityNumbers.numSnapshotEntities ; i++ ) {
+		ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
+		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
+		*state = ent->s;
+		
 #ifdef DEDICATED
-        if (DuelCull(client->gentity, ent, ps)) {
-            state->solid = 0;
-        }
-#endif      
-        svs.nextSnapshotEntities++;
-        if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
-            svs.nextSnapshotEntities = 0; // Safer wrap than throwing a fatal error
-        }
-        frame->num_entities++;
-    }
+	    if (DuelCull(client->gentity, ent, ps)) {
+			state->solid = 0;
+		}
+#endif		
+		svs.nextSnapshotEntities++;
+		// this should never hit, map should always be restarted first in SV_Frame
+		if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
+			Com_Error(ERR_FATAL, "svs.nextSnapshotEntities wrapped");
+		}
+		frame->num_entities++;
+	}
 }
 
 
@@ -680,7 +682,6 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
 	if ( messageSize > 1500 ) {
 		messageSize = 1500;
 	}
-	
 	rate = client->rate;
 	if ( sv_maxRate->integer ) {
 		if ( sv_maxRate->integer < 1000 ) {
@@ -721,11 +722,9 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	{
 		// send additional message fragments if the last message
 		// was too large to send at once
-
-		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
+		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
 		SV_Netchan_TransmitNextFragment(&client->netchan);
 	}
-
 
 	// record information about the message
 	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
@@ -816,7 +815,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 			MSG_WriteByte(&msg, gamedir[i]);
 			i++;
 		}
-		MSG_WriteByte(&msg, 0);				
+		MSG_WriteByte(&msg, 0);
 
 		// MW - my attempt to fix illegible server message errors caused by
 		// packet fragmentation of initial snapshot.
@@ -825,11 +824,8 @@ void SV_SendClientSnapshot( client_t *client ) {
 		{
 			// send additional message fragments if the last message
 			// was too large to send at once
-
-			// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
+			Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
 			SV_Netchan_TransmitNextFragment(&client->netchan);
-			
-			// Track the work done this frame
 		}
 
 		// record information about the message
@@ -891,31 +887,30 @@ SV_SendClientMessages
 =======================
 */
 void SV_SendClientMessages( void ) {
-    int         i;
-    client_t    *c;
+	int			i;
+	client_t	*c;
 
-    // send a message to each connected client
-    for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
-        if (!c->state) {
-            continue;       // not connected
-        }
+	// send a message to each connected client
+	for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
+		if (!c->state) {
+			continue;		// not connected
+		}
 
-        if ( svs.time < c->nextSnapshotTime ) {
-            continue;       // not time yet
-        }
+		if ( svs.time < c->nextSnapshotTime ) {
+			continue;		// not time yet
+		}
 
-        // send additional message fragments if the last message
-        // was too large to send at once
-        if ( c->netchan.unsentFragments ) {
-            c->nextSnapshotTime = svs.time +
-                SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
-            SV_Netchan_TransmitNextFragment( &c->netchan );
-            
+		// send additional message fragments if the last message
+		// was too large to send at once
+		if ( c->netchan.unsentFragments ) {
+			c->nextSnapshotTime = svs.time +
+				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
+			SV_Netchan_TransmitNextFragment( &c->netchan );
+			continue;
+		}
 
-            continue;
-        }
-
-        // generate and send a new message
-        SV_SendClientSnapshot( c );
-    }
+		// generate and send a new message
+		SV_SendClientSnapshot( c );
+	}
 }
+

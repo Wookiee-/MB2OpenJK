@@ -1,0 +1,1783 @@
+diff --git a/codemp/CMakeLists.txt b/codemp/CMakeLists.txt
+index 9be90c87..2cdc785d 100644
+--- a/codemp/CMakeLists.txt
++++ b/codemp/CMakeLists.txt
+@@ -242,6 +242,8 @@ if(BuildMPEngine OR BuildMPDed)
+ 		"${MPDir}/qcommon/GenericParser2.cpp"
+ 		"${MPDir}/qcommon/GenericParser2.h"
+ 		"${MPDir}/qcommon/huffman.cpp"
++		"${MPDir}/qcommon/huffman_static.cpp"
++		"${MPDir}/qcommon/huffman_static.h"
+ 		"${MPDir}/qcommon/md4.cpp"
+ 		"${MPDir}/qcommon/md5.cpp"
+ 		"${MPDir}/qcommon/md5.h"
+@@ -335,6 +337,8 @@ if(BuildMPEngine OR BuildMPDed)
+ 		"${MPDir}/server/sv_world.cpp"
+ 		"${MPDir}/server/sv_gameapi.cpp"
+ 		"${MPDir}/server/sv_gameapi.h"
++		"${MPDir}/server/duel_cull.cpp"
++		"${MPDir}/server/duel_cull.h"
+ 		)
+ 	source_group("server" FILES ${MPEngineAndDedServerFiles})
+ 	set(MPEngineAndDedFiles ${MPEngineAndDedFiles} ${MPEngineAndDedServerFiles})
+diff --git a/codemp/qcommon/huffman_static.cpp b/codemp/qcommon/huffman_static.cpp
+new file mode 100644
+index 00000000..3a85ac61
+--- /dev/null
++++ b/codemp/qcommon/huffman_static.cpp
+@@ -0,0 +1,188 @@
++#include "huffman_static.h"
++
++// Paste the HuffmanDecoderTable[2048] you provided here...
++const uint16_t HuffmanDecoderTable[2048] = 
++{
++	2512, 2182, 512, 2763, 1859, 2808, 512, 2360, 1918, 1988, 512, 1803, 2158, 2358, 512, 2180,
++	1798, 2053, 512, 1804, 2603, 1288, 512, 2166, 2285, 2167, 512, 1281, 1640, 2767, 512, 1664,
++	1731, 2116, 512, 2788, 1791, 1808, 512, 1840, 2153, 1921, 512, 2708, 2723, 1549, 512, 2046,
++	1893, 2717, 512, 2602, 1801, 1288, 512, 1568, 2480, 2062, 512, 1281, 2145, 2711, 512, 1543,
++	1909, 2150, 512, 2077, 2338, 2762, 512, 2162, 1794, 2024, 512, 2168, 1922, 2447, 512, 2334,
++	1857, 2117, 512, 2100, 2240, 1288, 512, 2186, 2321, 1908, 512, 1281, 1640, 2242, 512, 1664,
++	1731, 2729, 512, 2633, 1791, 1919, 512, 2184, 1917, 1802, 512, 2710, 1795, 1549, 512, 2172,
++	2375, 2789, 512, 2171, 2187, 1288, 512, 1568, 2095, 2163, 512, 1281, 1858, 1923, 512, 1543,
++	2374, 2446, 512, 2181, 1859, 2160, 512, 2183, 1918, 1988, 512, 1803, 2161, 2751, 512, 2413,
++	1798, 2529, 512, 1804, 2344, 1288, 512, 2404, 2156, 2786, 512, 1281, 1640, 2641, 512, 1664,
++	1731, 2052, 512, 2170, 1791, 1808, 512, 1840, 2395, 1921, 512, 2586, 2319, 1549, 512, 2046,
++	1893, 2101, 512, 2159, 1801, 1288, 512, 1568, 2247, 2773, 512, 1281, 2365, 2410, 512, 1543,
++	1909, 2781, 512, 2097, 2411, 2740, 512, 2396, 1794, 2024, 512, 2734, 1922, 2733, 512, 2112,
++	1857, 2528, 512, 2593, 2079, 1288, 512, 2648, 2143, 1908, 512, 1281, 1640, 2770, 512, 1664,
++	1731, 2169, 512, 2714, 1791, 1919, 512, 2185, 1917, 1802, 512, 2398, 1795, 1549, 512, 2098,
++	2801, 2361, 512, 2400, 2328, 1288, 512, 1568, 2783, 2713, 512, 1281, 1858, 1923, 512, 1543,
++	2816, 2182, 512, 2497, 1859, 2397, 512, 2794, 1918, 1988, 512, 1803, 2158, 2772, 512, 2180,
++	1798, 2053, 512, 1804, 2464, 1288, 512, 2166, 2285, 2167, 512, 1281, 1640, 2764, 512, 1664,
++	1731, 2116, 512, 2620, 1791, 1808, 512, 1840, 2153, 1921, 512, 2716, 2384, 1549, 512, 2046,
++	1893, 2448, 512, 2722, 1801, 1288, 512, 1568, 2472, 2062, 512, 1281, 2145, 2376, 512, 1543,
++	1909, 2150, 512, 2077, 2366, 2709, 512, 2162, 1794, 2024, 512, 2168, 1922, 2735, 512, 2407,
++	1857, 2117, 512, 2100, 2240, 1288, 512, 2186, 2779, 1908, 512, 1281, 1640, 2242, 512, 1664,
++	1731, 2359, 512, 2705, 1791, 1919, 512, 2184, 1917, 1802, 512, 2642, 1795, 1549, 512, 2172,
++	2394, 2645, 512, 2171, 2187, 1288, 512, 1568, 2095, 2163, 512, 1281, 1858, 1923, 512, 1543,
++	2450, 2771, 512, 2181, 1859, 2160, 512, 2183, 1918, 1988, 512, 1803, 2161, 2585, 512, 2403,
++	1798, 2619, 512, 1804, 2777, 1288, 512, 2355, 2156, 2362, 512, 1281, 1640, 2380, 512, 1664,
++	1731, 2052, 512, 2170, 1791, 1808, 512, 1840, 2811, 1921, 512, 2402, 2601, 1549, 512, 2046,
++	1893, 2101, 512, 2159, 1801, 1288, 512, 1568, 2247, 2719, 512, 1281, 2747, 2776, 512, 1543,
++	1909, 2725, 512, 2097, 2445, 2765, 512, 2638, 1794, 2024, 512, 2444, 1922, 2774, 512, 2112,
++	1857, 2727, 512, 2644, 2079, 1288, 512, 2800, 2143, 1908, 512, 1281, 1640, 2580, 512, 1664,
++	1731, 2169, 512, 2646, 1791, 1919, 512, 2185, 1917, 1802, 512, 2588, 1795, 1549, 512, 2098,
++	2322, 2504, 512, 2623, 2350, 1288, 512, 1568, 2323, 2721, 512, 1281, 1858, 1923, 512, 1543,
++	2512, 2182, 512, 2746, 1859, 2798, 512, 2360, 1918, 1988, 512, 1803, 2158, 2358, 512, 2180,
++	1798, 2053, 512, 1804, 2745, 1288, 512, 2166, 2285, 2167, 512, 1281, 1640, 2806, 512, 1664,
++	1731, 2116, 512, 2796, 1791, 1808, 512, 1840, 2153, 1921, 512, 2582, 2761, 1549, 512, 2046,
++	1893, 2793, 512, 2647, 1801, 1288, 512, 1568, 2480, 2062, 512, 1281, 2145, 2738, 512, 1543,
++	1909, 2150, 512, 2077, 2338, 2715, 512, 2162, 1794, 2024, 512, 2168, 1922, 2447, 512, 2334,
++	1857, 2117, 512, 2100, 2240, 1288, 512, 2186, 2321, 1908, 512, 1281, 1640, 2242, 512, 1664,
++	1731, 2795, 512, 2750, 1791, 1919, 512, 2184, 1917, 1802, 512, 2732, 1795, 1549, 512, 2172,
++	2375, 2604, 512, 2171, 2187, 1288, 512, 1568, 2095, 2163, 512, 1281, 1858, 1923, 512, 1543,
++	2374, 2446, 512, 2181, 1859, 2160, 512, 2183, 1918, 1988, 512, 1803, 2161, 2813, 512, 2413,
++	1798, 2529, 512, 1804, 2344, 1288, 512, 2404, 2156, 2743, 512, 1281, 1640, 2748, 512, 1664,
++	1731, 2052, 512, 2170, 1791, 1808, 512, 1840, 2395, 1921, 512, 2637, 2319, 1549, 512, 2046,
++	1893, 2101, 512, 2159, 1801, 1288, 512, 1568, 2247, 2812, 512, 1281, 2365, 2410, 512, 1543,
++	1909, 2799, 512, 2097, 2411, 2802, 512, 2396, 1794, 2024, 512, 2649, 1922, 2595, 512, 2112,
++	1857, 2528, 512, 2790, 2079, 1288, 512, 2634, 2143, 1908, 512, 1281, 1640, 2724, 512, 1664,
++	1731, 2169, 512, 2730, 1791, 1919, 512, 2185, 1917, 1802, 512, 2398, 1795, 1549, 512, 2098,
++	2605, 2361, 512, 2400, 2328, 1288, 512, 1568, 2787, 2810, 512, 1281, 1858, 1923, 512, 1543,
++	2803, 2182, 512, 2497, 1859, 2397, 512, 2758, 1918, 1988, 512, 1803, 2158, 2598, 512, 2180,
++	1798, 2053, 512, 1804, 2464, 1288, 512, 2166, 2285, 2167, 512, 1281, 1640, 2726, 512, 1664,
++	1731, 2116, 512, 2583, 1791, 1808, 512, 1840, 2153, 1921, 512, 2712, 2384, 1549, 512, 2046,
++	1893, 2448, 512, 2639, 1801, 1288, 512, 1568, 2472, 2062, 512, 1281, 2145, 2376, 512, 1543,
++	1909, 2150, 512, 2077, 2366, 2731, 512, 2162, 1794, 2024, 512, 2168, 1922, 2766, 512, 2407,
++	1857, 2117, 512, 2100, 2240, 1288, 512, 2186, 2809, 1908, 512, 1281, 1640, 2242, 512, 1664,
++	1731, 2359, 512, 2587, 1791, 1919, 512, 2184, 1917, 1802, 512, 2643, 1795, 1549, 512, 2172,
++	2394, 2635, 512, 2171, 2187, 1288, 512, 1568, 2095, 2163, 512, 1281, 1858, 1923, 512, 1543,
++	2450, 2749, 512, 2181, 1859, 2160, 512, 2183, 1918, 1988, 512, 1803, 2161, 2778, 512, 2403,
++	1798, 2791, 512, 1804, 2775, 1288, 512, 2355, 2156, 2362, 512, 1281, 1640, 2380, 512, 1664,
++	1731, 2052, 512, 2170, 1791, 1808, 512, 1840, 2805, 1921, 512, 2402, 2741, 1549, 512, 2046,
++	1893, 2101, 512, 2159, 1801, 1288, 512, 1568, 2247, 2769, 512, 1281, 2739, 2780, 512, 1543,
++	1909, 2737, 512, 2097, 2445, 2596, 512, 2757, 1794, 2024, 512, 2444, 1922, 2599, 512, 2112,
++	1857, 2804, 512, 2744, 2079, 1288, 512, 2707, 2143, 1908, 512, 1281, 1640, 2782, 512, 1664,
++	1731, 2169, 512, 2742, 1791, 1919, 512, 2185, 1917, 1802, 512, 2718, 1795, 1549, 512, 2098,
++	2322, 2504, 512, 2581, 2350, 1288, 512, 1568, 2323, 2597, 512, 1281, 1858, 1923, 512, 1543,
++	2512, 2182, 512, 2763, 1859, 2808, 512, 2360, 1918, 1988, 512, 1803, 2158, 2358, 512, 2180,
++	1798, 2053, 512, 1804, 2603, 1288, 512, 2166, 2285, 2167, 512, 1281, 1640, 2767, 512, 1664,
++	1731, 2116, 512, 2788, 1791, 1808, 512, 1840, 2153, 1921, 512, 2708, 2723, 1549, 512, 2046,
++	1893, 2717, 512, 2602, 1801, 1288, 512, 1568, 2480, 2062, 512, 1281, 2145, 2711, 512, 1543,
++	1909, 2150, 512, 2077, 2338, 2762, 512, 2162, 1794, 2024, 512, 2168, 1922, 2447, 512, 2334,
++	1857, 2117, 512, 2100, 2240, 1288, 512, 2186, 2321, 1908, 512, 1281, 1640, 2242, 512, 1664,
++	1731, 2729, 512, 2633, 1791, 1919, 512, 2184, 1917, 1802, 512, 2710, 1795, 1549, 512, 2172,
++	2375, 2789, 512, 2171, 2187, 1288, 512, 1568, 2095, 2163, 512, 1281, 1858, 1923, 512, 1543,
++	2374, 2446, 512, 2181, 1859, 2160, 512, 2183, 1918, 1988, 512, 1803, 2161, 2751, 512, 2413,
++	1798, 2529, 512, 1804, 2344, 1288, 512, 2404, 2156, 2786, 512, 1281, 1640, 2641, 512, 1664,
++	1731, 2052, 512, 2170, 1791, 1808, 512, 1840, 2395, 1921, 512, 2586, 2319, 1549, 512, 2046,
++	1893, 2101, 512, 2159, 1801, 1288, 512, 1568, 2247, 2773, 512, 1281, 2365, 2410, 512, 1543,
++	1909, 2781, 512, 2097, 2411, 2740, 512, 2396, 1794, 2024, 512, 2734, 1922, 2733, 512, 2112,
++	1857, 2528, 512, 2593, 2079, 1288, 512, 2648, 2143, 1908, 512, 1281, 1640, 2770, 512, 1664,
++	1731, 2169, 512, 2714, 1791, 1919, 512, 2185, 1917, 1802, 512, 2398, 1795, 1549, 512, 2098,
++	2801, 2361, 512, 2400, 2328, 1288, 512, 1568, 2783, 2713, 512, 1281, 1858, 1923, 512, 1543,
++	3063, 2182, 512, 2497, 1859, 2397, 512, 2794, 1918, 1988, 512, 1803, 2158, 2772, 512, 2180,
++	1798, 2053, 512, 1804, 2464, 1288, 512, 2166, 2285, 2167, 512, 1281, 1640, 2764, 512, 1664,
++	1731, 2116, 512, 2620, 1791, 1808, 512, 1840, 2153, 1921, 512, 2716, 2384, 1549, 512, 2046,
++	1893, 2448, 512, 2722, 1801, 1288, 512, 1568, 2472, 2062, 512, 1281, 2145, 2376, 512, 1543,
++	1909, 2150, 512, 2077, 2366, 2709, 512, 2162, 1794, 2024, 512, 2168, 1922, 2735, 512, 2407,
++	1857, 2117, 512, 2100, 2240, 1288, 512, 2186, 2779, 1908, 512, 1281, 1640, 2242, 512, 1664,
++	1731, 2359, 512, 2705, 1791, 1919, 512, 2184, 1917, 1802, 512, 2642, 1795, 1549, 512, 2172,
++	2394, 2645, 512, 2171, 2187, 1288, 512, 1568, 2095, 2163, 512, 1281, 1858, 1923, 512, 1543,
++	2450, 2771, 512, 2181, 1859, 2160, 512, 2183, 1918, 1988, 512, 1803, 2161, 2585, 512, 2403,
++	1798, 2619, 512, 1804, 2777, 1288, 512, 2355, 2156, 2362, 512, 1281, 1640, 2380, 512, 1664,
++	1731, 2052, 512, 2170, 1791, 1808, 512, 1840, 2811, 1921, 512, 2402, 2601, 1549, 512, 2046,
++	1893, 2101, 512, 2159, 1801, 1288, 512, 1568, 2247, 2719, 512, 1281, 2747, 2776, 512, 1543,
++	1909, 2725, 512, 2097, 2445, 2765, 512, 2638, 1794, 2024, 512, 2444, 1922, 2774, 512, 2112,
++	1857, 2727, 512, 2644, 2079, 1288, 512, 2800, 2143, 1908, 512, 1281, 1640, 2580, 512, 1664,
++	1731, 2169, 512, 2646, 1791, 1919, 512, 2185, 1917, 1802, 512, 2588, 1795, 1549, 512, 2098,
++	2322, 2504, 512, 2623, 2350, 1288, 512, 1568, 2323, 2721, 512, 1281, 1858, 1923, 512, 1543,
++	2512, 2182, 512, 2746, 1859, 2798, 512, 2360, 1918, 1988, 512, 1803, 2158, 2358, 512, 2180,
++	1798, 2053, 512, 1804, 2745, 1288, 512, 2166, 2285, 2167, 512, 1281, 1640, 2806, 512, 1664,
++	1731, 2116, 512, 2796, 1791, 1808, 512, 1840, 2153, 1921, 512, 2582, 2761, 1549, 512, 2046,
++	1893, 2793, 512, 2647, 1801, 1288, 512, 1568, 2480, 2062, 512, 1281, 2145, 2738, 512, 1543,
++	1909, 2150, 512, 2077, 2338, 2715, 512, 2162, 1794, 2024, 512, 2168, 1922, 2447, 512, 2334,
++	1857, 2117, 512, 2100, 2240, 1288, 512, 2186, 2321, 1908, 512, 1281, 1640, 2242, 512, 1664,
++	1731, 2795, 512, 2750, 1791, 1919, 512, 2184, 1917, 1802, 512, 2732, 1795, 1549, 512, 2172,
++	2375, 2604, 512, 2171, 2187, 1288, 512, 1568, 2095, 2163, 512, 1281, 1858, 1923, 512, 1543,
++	2374, 2446, 512, 2181, 1859, 2160, 512, 2183, 1918, 1988, 512, 1803, 2161, 2813, 512, 2413,
++	1798, 2529, 512, 1804, 2344, 1288, 512, 2404, 2156, 2743, 512, 1281, 1640, 2748, 512, 1664,
++	1731, 2052, 512, 2170, 1791, 1808, 512, 1840, 2395, 1921, 512, 2637, 2319, 1549, 512, 2046,
++	1893, 2101, 512, 2159, 1801, 1288, 512, 1568, 2247, 2812, 512, 1281, 2365, 2410, 512, 1543,
++	1909, 2799, 512, 2097, 2411, 2802, 512, 2396, 1794, 2024, 512, 2649, 1922, 2595, 512, 2112,
++	1857, 2528, 512, 2790, 2079, 1288, 512, 2634, 2143, 1908, 512, 1281, 1640, 2724, 512, 1664,
++	1731, 2169, 512, 2730, 1791, 1919, 512, 2185, 1917, 1802, 512, 2398, 1795, 1549, 512, 2098,
++	2605, 2361, 512, 2400, 2328, 1288, 512, 1568, 2787, 2810, 512, 1281, 1858, 1923, 512, 1543,
++	2803, 2182, 512, 2497, 1859, 2397, 512, 2758, 1918, 1988, 512, 1803, 2158, 2598, 512, 2180,
++	1798, 2053, 512, 1804, 2464, 1288, 512, 2166, 2285, 2167, 512, 1281, 1640, 2726, 512, 1664,
++	1731, 2116, 512, 2583, 1791, 1808, 512, 1840, 2153, 1921, 512, 2712, 2384, 1549, 512, 2046,
++	1893, 2448, 512, 2639, 1801, 1288, 512, 1568, 2472, 2062, 512, 1281, 2145, 2376, 512, 1543,
++	1909, 2150, 512, 2077, 2366, 2731, 512, 2162, 1794, 2024, 512, 2168, 1922, 2766, 512, 2407,
++	1857, 2117, 512, 2100, 2240, 1288, 512, 2186, 2809, 1908, 512, 1281, 1640, 2242, 512, 1664,
++	1731, 2359, 512, 2587, 1791, 1919, 512, 2184, 1917, 1802, 512, 2643, 1795, 1549, 512, 2172,
++	2394, 2635, 512, 2171, 2187, 1288, 512, 1568, 2095, 2163, 512, 1281, 1858, 1923, 512, 1543,
++	2450, 2749, 512, 2181, 1859, 2160, 512, 2183, 1918, 1988, 512, 1803, 2161, 2778, 512, 2403,
++	1798, 2791, 512, 1804, 2775, 1288, 512, 2355, 2156, 2362, 512, 1281, 1640, 2380, 512, 1664,
++	1731, 2052, 512, 2170, 1791, 1808, 512, 1840, 2805, 1921, 512, 2402, 2741, 1549, 512, 2046,
++	1893, 2101, 512, 2159, 1801, 1288, 512, 1568, 2247, 2769, 512, 1281, 2739, 2780, 512, 1543,
++	1909, 2737, 512, 2097, 2445, 2596, 512, 2757, 1794, 2024, 512, 2444, 1922, 2599, 512, 2112,
++	1857, 2804, 512, 2744, 2079, 1288, 512, 2707, 2143, 1908, 512, 1281, 1640, 2782, 512, 1664,
++	1731, 2169, 512, 2742, 1791, 1919, 512, 2185, 1917, 1802, 512, 2718, 1795, 1549, 512, 2098,
++	2322, 2504, 512, 2581, 2350, 1288, 512, 1568, 2323, 2597, 512, 1281, 1858, 1923, 512, 1543
++};
++
++// Paste the HuffmanEncoderTable[256] you provided here...
++static const uint16_t HuffmanEncoderTable[256] = {
++	34, 437, 1159, 1735, 2584, 280, 263, 1014, 341, 839, 1687, 183, 311, 726, 920, 2761,
++	599, 1417, 7945, 8073, 7642, 16186, 8890, 12858, 3913, 6362, 2746, 13882, 7866, 1080, 1273, 3400,
++	886, 3386, 1097, 11482, 15450, 16282, 12506, 15578, 2377, 6858, 826, 330, 10010, 12042, 8009, 1928,
++	631, 3128, 3832, 6521, 1336, 2840, 217, 5657, 121, 3865, 6553, 6426, 4666, 3017, 5193, 7994,
++	3320, 1287, 1991, 71, 536, 1304, 2057, 1801, 5081, 1594, 11642, 14106, 6617, 10938, 7290, 13114,
++	4809, 2522, 5818, 14010, 7482, 5914, 7738, 9018, 3450, 11450, 5897, 2697, 3193, 4185, 3769, 3464,
++	3897, 968, 6841, 6393, 2425, 775, 1048, 5369, 454, 648, 3033, 3145, 2440, 2297, 200, 2872,
++	2136, 2248, 1144, 1944, 1431, 1031, 376, 408, 1208, 3608, 2616, 1848, 1784, 1671, 135, 1623,
++	502, 663, 1223, 2007, 248, 2104, 24, 2168, 1656, 3704, 1400, 1864, 7353, 7241, 2073, 1241,
++	4889, 5690, 6153, 15738, 698, 5210, 1722, 986, 12986, 3994, 3642, 9306, 4794, 794, 16058, 7066,
++	4425, 8090, 4922, 714, 11738, 7194, 12762, 7450, 5001, 1562, 11834, 13402, 9914, 3290, 3258, 5338,
++	905, 15386, 9178, 15306, 3162, 15050, 15930, 10650, 15674, 8522, 8250, 7114, 10714, 14362, 9786, 2266,
++	1352, 4153, 1496, 518, 151, 15482, 12410, 2952, 7961, 8906, 1114, 58, 4570, 7258, 13530, 474,
++	9, 15258, 3546, 6170, 4314, 2970, 7386, 14666, 7130, 6474, 14554, 5514, 15322, 3098, 15834, 3978,
++	3353, 2329, 2458, 12170, 570, 1818, 11578, 14618, 1175, 8986, 4218, 9754, 8762, 392, 8282, 11290,
++	7546, 3850, 11354, 12298, 15642, 14986, 8666, 20491, 90, 13706, 12186, 6794, 11162, 10458, 759, 582
++};    
++
++void StaticHuff_PutBit( byte* fout, int bitIndex, int bit ) {
++    const int byteIndex = bitIndex >> 3;
++    const int bitOffset = bitIndex & 7;
++    if ( bitOffset == 0 ) {
++        fout[ byteIndex ] = (byte)(bit & 1);
++    } else {
++        fout[byteIndex] |= (bit & 1) << bitOffset;
++    }
++}
++
++int StaticHuff_PutSymbol( byte* fout, int offset, int symbol ) {
++    const uint16_t result = HuffmanEncoderTable[ symbol & 0xFF ];
++    const int bitCount = result & 15;
++    int code = (result >> 4) & 0x7FF;
++
++    for( int i = 0; i < bitCount; ++i ) {
++        StaticHuff_PutBit( fout, offset + i, code & 1 );
++        code >>= 1;
++    }
++    return bitCount;
++}
++
++int StaticHuff_GetBit( const byte* buffer, int bitIndex ) {
++    return (buffer[(bitIndex >> 3)] >> (bitIndex & 7)) & 0x1;
++}
++
++int StaticHuff_GetSymbol( unsigned int* symbol, const byte* buffer, int bitIndex ) {
++    // Standard Q3 bit-crunching to read the table
++    const uint16_t code = ((*(const uint32_t*)(buffer + (bitIndex >> 3))) >> (bitIndex & 7)) & 0x7FF;
++    const uint16_t entry = HuffmanDecoderTable[ code ];
++    *symbol = (unsigned int)(entry & 0xFF);
++    return (int)(entry >> 8);
++}
+\ No newline at end of file
+diff --git a/codemp/qcommon/huffman_static.h b/codemp/qcommon/huffman_static.h
+new file mode 100644
+index 00000000..c0071493
+--- /dev/null
++++ b/codemp/qcommon/huffman_static.h
+@@ -0,0 +1,8 @@
++#pragma once
++#include "qcommon/q_shared.h"
++
++// C++ optimized static huffman prototypes
++void StaticHuff_PutBit( byte* fout, int bitIndex, int bit );
++int  StaticHuff_PutSymbol( byte* fout, int offset, int symbol );
++int  StaticHuff_GetBit( const byte* buffer, int bitIndex );
++int  StaticHuff_GetSymbol( unsigned int* symbol, const byte* buffer, int bitIndex );
+\ No newline at end of file
+diff --git a/codemp/qcommon/msg.cpp b/codemp/qcommon/msg.cpp
+index 79d511e0..57d08d59 100644
+--- a/codemp/qcommon/msg.cpp
++++ b/codemp/qcommon/msg.cpp
+@@ -25,11 +25,12 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ #include "qcommon/q_shared.h"
+ #include "qcommon/qcommon.h"
+ #include "server/server.h"
++#include "huffman_static.h"
+ 
+ //#define _NEWHUFFTABLE_		// Build "c:\\netchan.bin"
+ //#define _USINGNEWHUFFTABLE_		// Build a new frequency table to cut and paste.
+ 
+-static huffman_t		msgHuff;
++// static huffman_t		msgHuff;
+ 
+ static qboolean			msgInit = qfalse;
+ #ifdef _NEWHUFFTABLE_
+@@ -135,178 +136,185 @@ int	overflows;
+ 
+ // negative bit values include signs
+ void MSG_WriteBits( msg_t *msg, int value, int bits ) {
+-	int	i;
+-
+-	oldsize += bits;
+-
+-	if ( msg->overflowed ) {
+-		return;
+-	}
+-
+-	if ( bits == 0 || bits < -31 || bits > 32 ) {
+-		Com_Error( ERR_DROP, "MSG_WriteBits: bad bits %i", bits );
+-	}
+-
+-	// check for overflows
+-	if ( bits != 32 ) {
+-		if ( bits > 0 ) {
+-			if ( value > ( ( 1 << bits ) - 1 ) || value < 0 ) {
+-				overflows++;
+-#ifndef FINAL_BUILD
+-//				Com_Printf ("MSG_WriteBits: overflow writing %d in %d bits [index %i]\n", value, bits, gLastBitIndex);
+-#endif
+-			}
+-		} else {
+-			int	r;
+-
+-			r = 1 << (bits-1);
+-
+-			if ( value >  r - 1 || value < -r ) {
+-				overflows++;
+-#ifndef FINAL_BUILD
+-//				Com_Printf ("MSG_WriteBits: overflow writing %d in %d bits [index %i]\n", value, bits, gLastBitIndex);
+-#endif
+-			}
+-		}
+-	}
+-	if ( bits < 0 ) {
+-		bits = -bits;
+-	}
+-	if (msg->oob) {
+-		if ( msg->cursize + ( bits >> 3 ) > msg->maxsize ) {
+-			msg->overflowed = qtrue;
+-			return;
+-		}
+-
+-		if (bits==8) {
+-			msg->data[msg->cursize] = value;
+-			msg->cursize += 1;
+-			msg->bit += 8;
+-		} else if (bits==16) {
+-			short temp = value;
+-
+-			CopyLittleShort(&msg->data[msg->cursize], &temp);
+-			msg->cursize += 2;
+-			msg->bit += 16;
+-		} else if (bits==32) {
+-			CopyLittleLong(&msg->data[msg->cursize], &value);
+-			msg->cursize += 4;
+-			msg->bit += 32;
+-		} else {
+-			Com_Error(ERR_DROP, "can't write %d bits\n", bits);
+-		}
+-	} else {
+-		value &= (0xffffffff>>(32-bits));
+-		if (bits&7) {
+-			int nbits;
+-			nbits = bits&7;
+-			if ( msg->bit + nbits > msg->maxsize << 3 ) {
+-				msg->overflowed = qtrue;
+-				return;
+-			}
+-			for(i=0;i<nbits;i++) {
+-				Huff_putBit((value&1), msg->data, &msg->bit);
+-				value = (value>>1);
+-			}
+-			bits = bits - nbits;
+-		}
+-		if (bits) {
+-			for(i=0;i<bits;i+=8) {
++    int i;
++
++    oldsize += bits;
++
++    if ( msg->overflowed ) {
++        return;
++    }
++
++    if ( bits == 0 || bits < -31 || bits > 32 ) {
++        Com_Error( ERR_DROP, "MSG_WriteBits: bad bits %i", bits );
++    }
++
++    // check for overflows
++    if ( bits != 32 ) {
++        if ( bits > 0 ) {
++            if ( value > ( ( 1 << bits ) - 1 ) || value < 0 ) {
++                overflows++;
++            }
++        } else {
++            int r;
++            r = 1 << (bits-1);
++            if ( value >  r - 1 || value < -r ) {
++                overflows++;
++            }
++        }
++    }
++
++    if ( bits < 0 ) {
++        bits = -bits;
++    }
++
++    if (msg->oob) {
++        if ( msg->cursize + ( bits >> 3 ) > msg->maxsize ) {
++            msg->overflowed = qtrue;
++            return;
++        }
++
++        if (bits==8) {
++            msg->data[msg->cursize] = value;
++            msg->cursize += 1;
++            msg->bit += 8;
++        } else if (bits==16) {
++            short temp = value;
++            CopyLittleShort(&msg->data[msg->cursize], &temp);
++            msg->cursize += 2;
++            msg->bit += 16;
++        } else if (bits==32) {
++            CopyLittleLong(&msg->data[msg->cursize], &value);
++            msg->cursize += 4;
++            msg->bit += 32;
++        } else {
++            Com_Error(ERR_DROP, "can't write %d bits\n", bits);
++        }
++    } else {
++        value &= (0xffffffff>>(32-bits));
++        if (bits&7) {
++            int nbits;
++            nbits = bits&7;
++            if ( msg->bit + nbits > msg->maxsize << 3 ) {
++                msg->overflowed = qtrue;
++                return;
++            }
++            for(i=0;i<nbits;i++) {
++                // Use the static replacement for Huff_putBit
++                StaticHuff_PutBit(msg->data, msg->bit, (value & 1));
++                msg->bit++; 
++                value = (value>>1);
++            }
++            bits = bits - nbits;
++        }
++        if (bits) {
++            for(i=0;i<bits;i+=8) {
+ #ifdef _NEWHUFFTABLE_
+-				fwrite(&value, 1, 1, fp);
++                fwrite(&value, 1, 1, fp);
+ #endif // _NEWHUFFTABLE_
+-				Huff_offsetTransmit (&msgHuff.compressor, (value&0xff), msg->data, &msg->bit, msg->maxsize << 3);
+-				value = (value>>8);
+-
+-				if ( msg->bit > msg->maxsize << 3 ) {
+-					msg->overflowed = qtrue;
+-					return;
+-				}
+-			}
+-		}
+-		msg->cursize = (msg->bit>>3)+1;
+-	}
++                
++                // Use the static replacement for Huff_offsetTransmit
++                // This eliminates the tree-rebalancing "hitch"
++                msg->bit += StaticHuff_PutSymbol(msg->data, msg->bit, (value & 0xff));
++                value = (value>>8);
++
++                if ( msg->bit > msg->maxsize << 3 ) {
++                    msg->overflowed = qtrue;
++                    return;
++                }
++            }
++        }
++        msg->cursize = (msg->bit>>3)+1;
++    }
+ }
+ 
+ int MSG_ReadBits( msg_t *msg, int bits ) {
+-	int			value;
+-	int			get;
+-	qboolean	sgn;
+-	int			i, nbits;
+-
+-	if ( msg->readcount > msg->cursize ) {
+-		return 0;
+-	}
+-
+-	value = 0;
++    int         value;
++    int         get;
++    qboolean     sgn;
++    int         i, nbits;
++
++    if ( msg->readcount > msg->cursize ) {
++        return 0;
++    }
++
++    value = 0;
++
++    if ( bits < 0 ) {
++        bits = -bits;
++        sgn = qtrue;
++    } else {
++        sgn = qfalse;
++    }
++
++    if (msg->oob) {
++        if (msg->readcount + (bits>>3) > msg->cursize) {
++            msg->readcount = msg->cursize + 1;
++            return 0;
++        }
++
++        if (bits==8) {
++            value = msg->data[msg->readcount];
++            msg->readcount += 1;
++            msg->bit += 8;
++        } else if (bits==16) {
++            short temp;
++
++            CopyLittleShort(&temp, &msg->data[msg->readcount]);
++            value = temp;
++            msg->readcount += 2;
++            msg->bit += 16;
++        } else if (bits==32) {
++            CopyLittleLong(&value, &msg->data[msg->readcount]);
++            msg->readcount += 4;
++            msg->bit += 32;
++        } else {
++            Com_Error(ERR_DROP, "can't read %d bits\n", bits);
++        }
++    } else {
++        nbits = 0;
++        if (bits&7) {
++            nbits = bits&7;
++            if (msg->bit + nbits > msg->cursize << 3) {
++                msg->readcount = msg->cursize + 1;
++                return 0;
++            }
++            for(i=0;i<nbits;i++) {
++                // Replaced Huff_getBit with StaticHuff_GetBit
++                value |= (StaticHuff_GetBit(msg->data, msg->bit) << i);
++                msg->bit++;
++            }
++            bits = bits - nbits;
++        }
++        if (bits) {
++            for(i=0;i<bits;i+=8) {
++                // Replaced Huff_offsetReceive with StaticHuff_GetSymbol
++                // This uses your 2048-entry lookup table for instant decoding
++                unsigned int symbol;
++                msg->bit += StaticHuff_GetSymbol(&symbol, msg->data, msg->bit);
++                get = (int)symbol;
+ 
+-	if ( bits < 0 ) {
+-		bits = -bits;
+-		sgn = qtrue;
+-	} else {
+-		sgn = qfalse;
+-	}
+-
+-	if (msg->oob) {
+-		if (msg->readcount + (bits>>3) > msg->cursize) {
+-			msg->readcount = msg->cursize + 1;
+-			return 0;
+-		}
+-
+-		if (bits==8) {
+-			value = msg->data[msg->readcount];
+-			msg->readcount += 1;
+-			msg->bit += 8;
+-		} else if (bits==16) {
+-			short temp;
+-
+-			CopyLittleShort(&temp, &msg->data[msg->readcount]);
+-			value = temp;
+-			msg->readcount += 2;
+-			msg->bit += 16;
+-		} else if (bits==32) {
+-			CopyLittleLong(&value, &msg->data[msg->readcount]);
+-			msg->readcount += 4;
+-			msg->bit += 32;
+-		} else {
+-			Com_Error(ERR_DROP, "can't read %d bits\n", bits);
+-		}
+-	} else {
+-		nbits = 0;
+-		if (bits&7) {
+-			nbits = bits&7;
+-			if (msg->bit + nbits > msg->cursize << 3) {
+-				msg->readcount = msg->cursize + 1;
+-				return 0;
+-			}
+-			for(i=0;i<nbits;i++) {
+-				value |= (Huff_getBit(msg->data, &msg->bit)<<i);
+-			}
+-			bits = bits - nbits;
+-		}
+-		if (bits) {
+-			for(i=0;i<bits;i+=8) {
+-				Huff_offsetReceive (msgHuff.decompressor.tree, &get, msg->data, &msg->bit, msg->cursize<<3);
+ #ifdef _NEWHUFFTABLE_
+-				fwrite(&get, 1, 1, fp);
++                fwrite(&get, 1, 1, fp);
+ #endif // _NEWHUFFTABLE_
+-				value |= (get<<(i+nbits));
+-
+-				if (msg->bit > msg->cursize<<3) {
+-					msg->readcount = msg->cursize + 1;
+-					return 0;
+-				}
+-			}
+-		}
+-		msg->readcount = (msg->bit>>3)+1;
+-	}
+-	if ( sgn && bits > 0 && bits < 32 ) {
+-		if ( value & ( 1 << ( bits - 1 ) ) ) {
+-			value |= -1 ^ ( ( 1 << bits ) - 1 );
+-		}
+-	}
+-
+-	return value;
++                value |= (get<<(i+nbits));
++
++                if (msg->bit > msg->cursize<<3) {
++                    msg->readcount = msg->cursize + 1;
++                    return 0;
++                }
++            }
++        }
++        msg->readcount = (msg->bit>>3)+1;
++    }
++    
++    // Maintain sign extension logic exactly as it was
++    if ( sgn && bits > 0 && bits < 32 ) {
++        if ( value & ( 1 << ( bits - 1 ) ) ) {
++            value |= -1 ^ ( ( 1 << bits ) - 1 );
++        }
++    }
++
++    return value;
+ }
+ 
+ 
+@@ -3060,20 +3068,20 @@ int msg_hData[256] = {
+ #ifndef _USINGNEWHUFFTABLE_
+ 
+ void MSG_initHuffman() {
+-	int i,j;
++//	int i;
+ 
+ #ifdef _NEWHUFFTABLE_
+ 	fp=fopen("c:\\netchan.bin", "a");
+ #endif // _NEWHUFFTABLE_
+ 
+ 	msgInit = qtrue;
+-	Huff_Init(&msgHuff);
++/*	Huff_Init(&msgHuff);
+ 	for(i=0;i<256;i++) {
+ 		for (j=0;j<msg_hData[i];j++) {
+ 			Huff_addRef(&msgHuff.compressor,	(byte)i);			// Do update
+ 			Huff_addRef(&msgHuff.decompressor,	(byte)i);			// Do update
+ 		}
+-	}
++	} */
+ }
+ 
+ #else
+diff --git a/codemp/qcommon/net_chan.cpp b/codemp/qcommon/net_chan.cpp
+index 69ee3ed5..b1e32f8d 100644
+--- a/codemp/qcommon/net_chan.cpp
++++ b/codemp/qcommon/net_chan.cpp
+@@ -560,6 +560,12 @@ void NET_SendLoopPacket (netsrc_t sock, int length, const void *data, netadr_t t
+ 
+ void NET_SendPacket( netsrc_t sock, int length, const void *data, netadr_t to ) {
+ 
++	// PERFORMANCE GATE: Exit immediately if there is no data to send.
++    // This prevents unnecessary syscalls and kernel context switching.
++    if ( length <= 0 ) {
++        return;
++    }
++
+ 	// sequenced packets are shown in netchan, so just show oob
+ 	if ( showpackets->integer && *(int *)data == -1 )	{
+ 		Com_Printf ("send packet %4i\n", length);
+diff --git a/codemp/qcommon/qcommon.h b/codemp/qcommon/qcommon.h
+index b5fe3512..3246df6c 100644
+--- a/codemp/qcommon/qcommon.h
++++ b/codemp/qcommon/qcommon.h
+@@ -156,7 +156,7 @@ qboolean	Sys_IsLANAddress (netadr_t adr);
+ void		Sys_ShowIP(void);
+ 
+ 
+-#define	MAX_MSGLEN				49152		// max length of a message, which may
++#define	MAX_MSGLEN					49152	// max length of a message, which may
+ 											// be fragmented into multiple packets
+ 
+ //rww - 6/28/02 - Changed from 16384 to match sof2's. This does seem rather huge, but I guess it doesn't really hurt anything.
+diff --git a/codemp/server/duel_cull.cpp b/codemp/server/duel_cull.cpp
+new file mode 100644
+index 00000000..e466bb39
+--- /dev/null
++++ b/codemp/server/duel_cull.cpp
+@@ -0,0 +1,144 @@
++#include "qcommon/qcommon.h"
++#include "duel_cull.h"
++#include "sv_gameapi.h"
++
++// Persistent state trackers
++static qboolean oldDuelState[MAX_CLIENTS] = { qfalse };
++static int      duelOpponent[MAX_CLIENTS] = { 0 };
++
++static qboolean isPlayer(sharedEntity_t *ent) {
++	if (ent->s.eType == ET_PLAYER)
++		return qtrue;
++
++	return qfalse;
++}
++
++// Helper to extract clean names
++static void GetPlayerName(int clientNum, char *outName, int maxSize) {
++	char configstring[MAX_CONFIGSTRINGS];
++	const char *value;
++
++	if (clientNum < 0 || clientNum >= MAX_CLIENTS) {
++		Q_strncpyz(outName, "Unknown", maxSize);
++		return;
++	}
++
++	// 1. Try to get the name from Configstrings (The standard way)
++	SV_GetConfigstring(CS_PLAYERS + clientNum, configstring, sizeof(configstring));
++	value = Info_ValueForKey(configstring, "n");
++
++	// 2. If configstring is empty or generic, check the engine's direct client record
++	// svs.clients is globally available via server.h
++	if (!value || !value[0]) {
++		client_t *cl = &svs.clients[clientNum];
++		if (cl && cl->name[0]) {
++			value = cl->name;
++		}
++	}
++
++	if (value && value[0]) {
++		char cleanName[MAX_NETNAME];
++		Q_strncpyz(cleanName, value, sizeof(cleanName));
++		
++		// 3. Strip color codes (e.g., ^1, ^7) for the log file
++		Q_CleanStr(cleanName); 
++		
++		Q_strncpyz(outName, cleanName, maxSize);
++	} else {
++		// Final fallback if absolutely no name is found
++		Com_sprintf(outName, maxSize, "Player %d", clientNum);
++	}
++}
++
++int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, playerState_t *ps) {
++    // --- 1. PERFORMANCE GATE ---
++    // If the feature is off, exit immediately to save CPU for all players.
++    if (!sv_snapShotDuelCull->integer) {
++        return 0;
++    }
++
++    int entNum = ent->s.number;
++
++    // --- 2. LOGGING MODIFICATIONS (State-Locked) ---
++    // We use the 'ps' passed from the engine instead of calling GetPS(ent).
++    if (entNum >= 0 && entNum < MAX_CLIENTS && ps && isPlayer(ent)) {
++        qboolean isCurrentlyDueling = ps->duelInProgress ? qtrue : qfalse;
++
++        // START TRIGGER: Log when the duel begins
++        if (isCurrentlyDueling && !oldDuelState[entNum]) {
++            int myOpponentIdx = ps->duelIndex; 
++
++            if (myOpponentIdx >= 0 && myOpponentIdx < MAX_CLIENTS && myOpponentIdx != entNum) {
++                // Fetch opponent's state once using the index
++                playerState_t *oppPs = SV_GameClientNum(myOpponentIdx);
++
++                // RECIPROCITY CHECK: Ensure both are locked to each other
++                if (oppPs && oppPs->duelInProgress && oppPs->duelIndex == entNum) {
++                    // LOCK: This prevents any more "Start" logs until the duel ends
++                    oldDuelState[entNum] = qtrue;
++                    duelOpponent[entNum] = myOpponentIdx;
++
++                    // ID FILTER: Only one side prints to avoid double-logging
++                    if (entNum < myOpponentIdx) {
++                        char p1Name[MAX_NETNAME], p2Name[MAX_NETNAME];
++                        GetPlayerName(entNum, p1Name, sizeof(p1Name));
++                        GetPlayerName(myOpponentIdx, p2Name, sizeof(p2Name));
++                        GVM_LogPrintf("DuelStart: %s challenged %s to a private duel\n", p1Name, p2Name);
++                    }
++                }
++            }
++        }
++        // END TRIGGER: Log when the duel ends
++        else if (!isCurrentlyDueling && oldDuelState[entNum]) {
++            // MB2 Loser is set to 1 HP. Winner is > 1.
++            if (ps->stats[STAT_HEALTH] > 1) {
++                int loserIdx = duelOpponent[entNum];
++                
++                if (loserIdx >= 0 && loserIdx < MAX_CLIENTS) {
++                    char winnerName[MAX_NETNAME], loserName[MAX_NETNAME];
++                    GetPlayerName(entNum, winnerName, sizeof(winnerName));
++                    GetPlayerName(loserIdx, loserName, sizeof(loserName));
++
++                    GVM_LogPrintf("DuelEnd: %s has defeated %s in a private duel\n", winnerName, loserName);
++                }
++            }
++
++            // UNLOCK: Reset trackers so they can duel again
++            oldDuelState[entNum] = qfalse;
++            duelOpponent[entNum] = -1; 
++        }
++    }
++
++    // --- 3. TYPE & SAFETY CHECKS ---
++    // Ignore non-living entities (missiles, items, doors)
++    if (touch->s.eType != ET_PLAYER && touch->s.eType != ET_NPC) {
++        return 0; 
++    }
++
++    // NPCs are always solid (prevents ghosting training dummies)
++    if (touch->s.eType == ET_NPC) {
++        return 0; 
++    }
++
++    int touchNum = touch->s.number;
++
++    // --- 4. CULLING LOGIC ---
++    // DUELIST LOGIC: If 'ps' shows a duel, ghost everyone except opponent
++    if (ps && ps->duelInProgress) {
++        if (ps->duelIndex != touchNum) {
++            return 2; // Ghost bystander
++        }
++        return 0; // Solid opponent
++    }
++
++    // BYSTANDER LOGIC: Ghost players who are currently dueling
++    if (touch->s.eType == ET_PLAYER) {
++        // We only perform the lookup for the OTHER player
++        playerState_t *ops = SV_GameClientNum(touchNum);
++        if (ops && ops->duelInProgress) {
++            return 2; 
++        }
++    }
++
++    return 0;
++}
+\ No newline at end of file
+diff --git a/codemp/server/duel_cull.h b/codemp/server/duel_cull.h
+new file mode 100644
+index 00000000..4fcde51a
+--- /dev/null
++++ b/codemp/server/duel_cull.h
+@@ -0,0 +1,5 @@
++#pragma once
++
++#include "server.h"
++
++int DuelCull(sharedEntity_t *a, sharedEntity_t *b, playerState_t *ps);
+\ No newline at end of file
+diff --git a/codemp/server/server.h b/codemp/server/server.h
+index 6a14f7d7..6b124065 100644
+--- a/codemp/server/server.h
++++ b/codemp/server/server.h
+@@ -28,6 +28,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ #include "game/g_public.h"
+ #include "game/bg_public.h"
+ #include "rd-common/tr_public.h"
++#include "server/duel_cull.h"
++
++extern int DuelCull(sharedEntity_t *a, sharedEntity_t *b, playerState_t *ps);
+ 
+ //=============================================================================
+ 
+@@ -46,6 +49,7 @@ typedef struct svEntity_s {
+ 	int			lastCluster;		// if all the clusters don't fit in clusternums
+ 	int			areanum, areanum2;
+ 	int			snapshotCounter;	// used to prevent double adding from portal views
++	int 		snapshotTime;
+ } svEntity_t;
+ 
+ typedef enum {
+@@ -190,6 +194,10 @@ typedef struct client_s {
+ 	qboolean		csUpdated[MAX_CONFIGSTRINGS];
+ 
+ 	demoInfo_t		demo;
++#ifdef DEDICATED
++	qboolean		disableDuelCull;
++#endif
++
+ } client_t;
+ 
+ //=============================================================================
+@@ -276,6 +284,7 @@ extern	cvar_t	*sv_banFile;
+ extern	cvar_t	*sv_maxOOBRate;
+ extern	cvar_t	*sv_maxOOBRateIP;
+ extern	cvar_t	*sv_autoWhitelist;
++extern	cvar_t	*sv_snapShotDuelCull;
+ 
+ extern	serverBan_t serverBans[SERVER_MAXBANS];
+ extern	int serverBansCount;
+@@ -308,7 +317,7 @@ void SV_RemoveOperatorCommands (void);
+ void SV_MasterHeartbeat (void);
+ void SV_MasterShutdown (void);
+ 
+-
++void SV_LogPrintf( const char *fmt, ... );
+ 
+ 
+ //
+diff --git a/codemp/server/sv_client.cpp b/codemp/server/sv_client.cpp
+index 073fbbe6..2ba4f822 100644
+--- a/codemp/server/sv_client.cpp
++++ b/codemp/server/sv_client.cpp
+@@ -34,6 +34,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ #endif
+ 
+ #include "server/sv_gameapi.h"
++#include <algorithm>
+ 
+ static void SV_CloseDownload( client_t *cl );
+ 
+@@ -493,7 +494,7 @@ void SV_SendClientGameState( client_t *client ) {
+ 		// send additional message fragments if the last message
+ 		// was too large to send at once
+ 
+-		Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
++		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
+ 		SV_Netchan_TransmitNextFragment(&client->netchan);
+ 	}
+ 
+@@ -1601,4 +1602,3 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
+ //		Com_Printf( "WARNING: Junk at end of packet for client %i\n", cl - svs.clients );
+ //	}
+ }
+-
+diff --git a/codemp/server/sv_gameapi.cpp b/codemp/server/sv_gameapi.cpp
+index d216669a..32703671 100644
+--- a/codemp/server/sv_gameapi.cpp
++++ b/codemp/server/sv_gameapi.cpp
+@@ -3158,3 +3158,14 @@ void SV_RestartGame( void ) {
+ 
+ 	SV_InitGame( qtrue );
+ }
++
++
++void GVM_LogPrintf( const char *fmt, ... ) {
++	va_list argptr;
++	char text[1024];
++	va_start(argptr, fmt);
++	Q_vsnprintf(text, sizeof(text), fmt, argptr);
++	va_end(argptr);
++
++	SV_LogPrintf("%s", text);
++}
+\ No newline at end of file
+diff --git a/codemp/server/sv_gameapi.h b/codemp/server/sv_gameapi.h
+index ea651e5b..a37c9fa3 100644
+--- a/codemp/server/sv_gameapi.h
++++ b/codemp/server/sv_gameapi.h
+@@ -60,6 +60,7 @@ qboolean	GVM_NAV_EntIsBreakable				( int entityNum );
+ qboolean	GVM_NAV_EntIsRemovableUsable		( int entNum );
+ void		GVM_NAV_FindCombatPointWaypoints	( void );
+ int			GVM_BG_GetItemIndexByTag			( int tag, int type );
++void 		GVM_LogPrintf						( const char *fmt, ... );
+ 
+ void SV_BindGame( void );
+ void SV_UnbindGame( void );
+diff --git a/codemp/server/sv_init.cpp b/codemp/server/sv_init.cpp
+index 2d4f3d84..25073348 100644
+--- a/codemp/server/sv_init.cpp
++++ b/codemp/server/sv_init.cpp
+@@ -29,6 +29,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ #include "qcommon/stringed_ingame.h"
+ #include "sv_gameapi.h"
+ 
++extern FILE *duelLog; // Tell the compiler this exists in your other file
++
+ /*
+ ===============
+ SV_SendConfigstring
+@@ -1013,6 +1015,8 @@ void SV_Init (void) {
+ 	sv_maxOOBRate = Cvar_Get("sv_maxOOBRate", "1000", CVAR_ARCHIVE, "Maximum rate of handling incoming server commands" );
+ 	sv_maxOOBRateIP = Cvar_Get("sv_maxOOBRateIP", "1", CVAR_ARCHIVE, "Maximum rate of handling incoming server commands per IP address" );
+ 	sv_autoWhitelist = Cvar_Get("sv_autoWhitelist", "1", CVAR_ARCHIVE, "Save player IPs to allow them using server during DOS attack" );
++	
++	sv_snapShotDuelCull = Cvar_Get("sv_snapShotDuelCull", "1", CVAR_NONE, "Snapshot-based duel isolation");	
+ 
+ 	// initialize bot cvars so they are listed and can be set before loading the botlib
+ 	SV_BotInitCvars();
+@@ -1081,6 +1085,10 @@ void SV_Shutdown( char *finalmsg )
+ 		return;
+ 	}
+ 
++    if (duelLog) {
++        fclose(duelLog);
++        duelLog = NULL;
++    }
+ //	Com_Printf( "----- Server Shutdown -----\n" );
+ 
+ 	if ( svs.clients && !com_errorEntered ) {
+diff --git a/codemp/server/sv_main.cpp b/codemp/server/sv_main.cpp
+index 1bb2f7da..67bb4c7a 100644
+--- a/codemp/server/sv_main.cpp
++++ b/codemp/server/sv_main.cpp
+@@ -21,11 +21,20 @@ You should have received a copy of the GNU General Public License
+ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ ===========================================================================
+ */
+-
++#ifdef _WIN32
++    #include <windows.h>
++#else
++    #include <unistd.h>
++#endif
++
++#include <stdio.h>
++#include <time.h>
+ #include "server.h"
+ 
+ #include "ghoul2/ghoul2_shared.h"
+ #include "sv_gameapi.h"
++#include <unordered_map>
++#include <string>
+ 
+ serverStatic_t	svs;				// persistant server info
+ server_t		sv;					// local server
+@@ -72,9 +81,11 @@ cvar_t	*sv_banFile;
+ cvar_t	*sv_maxOOBRate;
+ cvar_t	*sv_maxOOBRateIP;
+ cvar_t	*sv_autoWhitelist;
++cvar_t	*sv_snapShotDuelCull;
+ 
+ serverBan_t serverBans[SERVER_MAXBANS];
+ int serverBansCount = 0;
++FILE *duelLog = NULL;
+ 
+ /*
+ =============================================================================
+@@ -84,6 +95,67 @@ EVENT MESSAGES
+ =============================================================================
+ */
+ 
++// Global map to store model name -> relative engine path
++static std::unordered_map<std::string, std::string> modelLocationMap;
++
++void SV_IndexAllModels() {
++    // 1. IMPORTANT: Clear old map data to free RAM
++    modelLocationMap.clear();
++    
++    char        **filelist;
++    int         i, n;
++    const char  *basePath = "models/players";
++
++    // 2. Automatically scan all folders
++    filelist = FS_ListFiles( basePath, "/", &n );
++    if (!filelist) return;
++
++    for ( i = 0 ; i < n ; i++ ) {
++        if ( !filelist[i] || !Q_stricmp( filelist[i], "." ) || !Q_stricmp( filelist[i], ".." ) ) continue;
++
++        char subPath[MAX_OSPATH];
++        int numFiles;
++        Com_sprintf( subPath, sizeof( subPath ), "models/players/%s", filelist[i] );
++        
++        char **subFiles = FS_ListFiles( subPath, ".glm", &numFiles );
++        if (subFiles) {
++            for ( int j = 0; j < numFiles; j++ ) {
++                char fullGLMPath[MAX_OSPATH];
++                Com_sprintf(fullGLMPath, sizeof(fullGLMPath), "%s/%s", subPath, subFiles[j]);
++                modelLocationMap[subFiles[j]] = fullGLMPath;
++            }
++            FS_FreeFileList( subFiles );
++        }
++    }
++    FS_FreeFileList( filelist );
++
++    // 3. MB2 PRE-CACHING LOOP - RAM SAFETY LIMIT
++    Com_Printf("--- MB2 Optimizer: Found %zu total assets ---\n", modelLocationMap.size());
++
++    int filesCached = 0;
++    long long totalBytesLoaded = 0;
++    // --- RAM SAFETY LIMIT (100MB per instance) ---
++    const long long MAX_BYTES_LIMIT = 100 * 1024 * 1024; 
++    // ---------------------------------------------
++
++    for (const auto& entry : modelLocationMap) {
++        fileHandle_t f;
++        int fileSize = FS_FOpenFileRead(entry.second.c_str(), &f, qfalse);
++        
++        if (fileSize > 0) {
++            // Check if adding this file exceeds our safe budget
++            if (totalBytesLoaded + fileSize < MAX_BYTES_LIMIT) {
++                FS_FCloseFile(f); 
++                totalBytesLoaded += fileSize;
++                filesCached++;
++            } else {
++                FS_FCloseFile(f); 
++            }
++        }
++    }
++    Com_Printf("--- Pre-Caching Complete. Cached %d files (%lld bytes) ---\n", filesCached, totalBytesLoaded);
++}
++
+ /*
+ ===============
+ SV_ExpandNewlines
+@@ -1251,5 +1323,55 @@ void SV_Frame( int msec ) {
+ 	SV_MasterHeartbeat();
+ }
+ 
++/*
++==================
++SV_LogPrintf
++
++New bridge function to write directly to games.log from the engine side.
++==================
++*/
++
++void SV_LogPrintf( const char *fmt, ... ) {
++    va_list     argptr;
++    static char text[1024];
++    static char timestampedText[1150];
++
++    va_start (argptr, fmt);
++    int textLen = Q_vsnprintf (text, sizeof(text), fmt, argptr);
++    va_end (argptr);
++
++    if ( textLen <= 0 ) return;
++
++    // 1. ANNOUNCEMENTS: Print to console for HUD/Players
++    int seconds = svs.time / 1000;
++    int tsLen = Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", seconds / 60, seconds % 60, text);
++    Com_Printf("%s", timestampedText);
++
++    // 2. C++14 COMPATIBLE SEARCH:
++    // This works on Windows/Linux without needing the C++17 header.
++	bool isDuel = (Q_stristr(text, "DuelStart") || Q_stristr(text, "DuelEnd"));
++	bool isChat = (Q_stristr(text, "say") || Q_stristr(text, "SMOD smsay"));
++
++    if (!isDuel && !isChat) {
++        return; 
++    }
++
++    // 3. OPTIMIZED WRITING
++    if (!duelLog) {
++        char fullPath[MAX_OSPATH];
++        const char *homePath = Cvar_VariableString("fs_homepath");
++        const char *logName = Cvar_VariableString("g_log");
++        if (homePath && homePath[0] && logName && logName[0]) {
++            Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
++            duelLog = fopen(fullPath, "a");
++        }
++    }
++
++    if (duelLog) {
++        // Still use fwrite for speed and fflush for your Python script
++        std::fwrite(timestampedText, 1, tsLen, duelLog);
++        std::fflush(duelLog); 
++    }
++}
+ //============================================================================
+ 
+diff --git a/codemp/server/sv_snapshot.cpp b/codemp/server/sv_snapshot.cpp
+index b8515bf3..2d809e74 100644
+--- a/codemp/server/sv_snapshot.cpp
++++ b/codemp/server/sv_snapshot.cpp
+@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ 
+ #include "server.h"
+ #include "qcommon/cm_public.h"
++#include <algorithm>
+ 
+ /*
+ =============================================================================
+@@ -54,63 +55,72 @@ Writes a delta update of an entityState_t list to the message.
+ =============
+ */
+ static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to, msg_t *msg ) {
+-	entityState_t	*oldent, *newent;
+-	int		oldindex, newindex;
+-	int		oldnum, newnum;
+-	int		from_num_entities;
+-
+-	// generate the delta update
+-	if ( !from ) {
+-		from_num_entities = 0;
+-	} else {
+-		from_num_entities = from->num_entities;
+-	}
+-
+-	newent = NULL;
+-	oldent = NULL;
+-	newindex = 0;
+-	oldindex = 0;
+-	while ( newindex < to->num_entities || oldindex < from_num_entities ) {
+-		if ( newindex >= to->num_entities ) {
+-			newnum = 9999;
+-		} else {
+-			newent = &svs.snapshotEntities[(to->first_entity+newindex) % svs.numSnapshotEntities];
+-			newnum = newent->number;
+-		}
+-
+-		if ( oldindex >= from_num_entities ) {
+-			oldnum = 9999;
+-		} else {
+-			oldent = &svs.snapshotEntities[(from->first_entity+oldindex) % svs.numSnapshotEntities];
+-			oldnum = oldent->number;
+-		}
+-
+-		if ( newnum == oldnum ) {
+-			// delta update from old position
+-			// because the force parm is qfalse, this will not result
+-			// in any bytes being emited if the entity has not changed at all
+-			MSG_WriteDeltaEntity (msg, oldent, newent, qfalse );
+-			oldindex++;
+-			newindex++;
+-			continue;
+-		}
+-
+-		if ( newnum < oldnum ) {
+-			// this is a new entity, send it from the baseline
+-			MSG_WriteDeltaEntity (msg, &sv.svEntities[newnum].baseline, newent, qtrue );
+-			newindex++;
+-			continue;
+-		}
+-
+-		if ( newnum > oldnum ) {
+-			// the old entity isn't present in the new message
+-			MSG_WriteDeltaEntity (msg, oldent, NULL, qtrue );
+-			oldindex++;
+-			continue;
+-		}
+-	}
+-
+-	MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );	// end of packetentities
++    entityState_t   *oldent, *newent;
++    int     oldindex, newindex;
++    int     oldnum, newnum;
++    int     from_num_entities;
++
++    // generate the delta update
++    if ( !from ) {
++        from_num_entities = 0;
++    } else {
++        from_num_entities = from->num_entities;
++    }
++
++    newent = NULL;
++    oldent = NULL;
++    newindex = 0;
++    oldindex = 0;
++
++    while ( newindex < to->num_entities || oldindex < from_num_entities ) {
++        if ( newindex >= to->num_entities ) {
++            newnum = 9999;
++        } else {
++            newent = &svs.snapshotEntities[(to->first_entity+newindex) % svs.numSnapshotEntities];
++            newnum = newent->number;
++        }
++
++        if ( oldindex >= from_num_entities ) {
++            oldnum = 9999;
++        } else {
++            oldent = &svs.snapshotEntities[(from->first_entity+oldindex) % svs.numSnapshotEntities];
++            oldnum = oldent->number;
++        }
++
++        if ( newnum == oldnum ) {
++            // PERFORMANCE: Fast memory-level comparison for 32 players
++            // Check if the entity has actually changed at the byte level
++            if ( std::equal((unsigned char*)oldent, (unsigned char*)oldent + sizeof(entityState_t), (unsigned char*)newent) ) {
++                // FIXED: To prevent CL_ParsePacketEntities, we call the standard delta function.
++                // By passing the same pointer twice (newent, newent), the engine 
++                // immediately writes the "no change" bits, keeping the client in sync.
++                MSG_WriteDeltaEntity(msg, newent, newent, qfalse); 
++            } else {
++                // Entities share an ID but data has changed (moved, fired, etc)
++                MSG_WriteDeltaEntity(msg, oldent, newent, qfalse);
++            }
++
++            oldindex++;
++            newindex++;
++            continue;
++        }
++        
++        if ( newnum < oldnum ) {
++            // this is a new entity, send it from the baseline
++            MSG_WriteDeltaEntity (msg, &sv.svEntities[newnum].baseline, newent, qtrue );
++            newindex++;
++            continue;
++        }
++
++        if ( newnum > oldnum ) {
++            // the old entity isn't present in the new message
++            MSG_WriteDeltaEntity (msg, oldent, NULL, qtrue );
++            oldindex++;
++            continue;
++        }
++    }
++
++    MSG_WriteBits( msg, (MAX_GENTITIES-1), GENTITYNUM_BITS );   // end of packetentities
+ }
+ 
+ 
+@@ -137,7 +147,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
+ 		client->deltaMessage = client->netchan.outgoingSequence;
+ 	}
+ 
+-	// try to use a previous frame as the source for delta compressing the snapshot
++		// try to use a previous frame as the source for delta compressing the snapshot
+ 	if ( deltaMessage <= 0 || client->state != CS_ACTIVE ) {
+ 		// client is asking for a retransmit
+ 		oldframe = NULL;
+@@ -204,6 +214,7 @@ static void SV_WriteSnapshotToClient( client_t *client, msg_t *msg ) {
+ 	MSG_WriteByte (msg, lastframe);
+ 
+ 	snapFlags = svs.snapFlagServerBit;
++
+ 	if ( client->rateDelayed ) {
+ 		snapFlags |= SNAPFLAG_RATE_DELAYED;
+ 	}
+@@ -316,21 +327,16 @@ typedef struct snapshotEntityNumbers_s {
+ SV_QsortEntityNumbers
+ =======================
+ */
+-static int QDECL SV_QsortEntityNumbers( const void *a, const void *b ) {
+-	int	*ea, *eb;
+-
+-	ea = (int *)a;
+-	eb = (int *)b;
+-
+-	if ( *ea == *eb ) {
+-		Com_Error( ERR_DROP, "SV_QsortEntityStates: duplicated entity" );
+-	}
+-
+-	if ( *ea < *eb ) {
+-		return -1;
+-	}
+-
+-	return 1;
++void SV_SortSnapshotEntities(int *entities, int numEntities) {
++    if (numEntities < 2) return;
++
++    std::sort(entities, entities + numEntities, [](int a, int b) {
++        if (a == b) {
++            // This is the "duplicated entity" check from stock
++            return false; 
++        }
++        return a < b;
++    });
+ }
+ 
+ 
+@@ -362,7 +368,12 @@ SV_AddEntitiesVisibleFromPoint
+ */
+ float g_svCullDist = -1.0f;
+ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *frame,
+-									snapshotEntityNumbers_t *eNums, qboolean portal ) {
++#ifndef DEDICATED
++									snapshotEntityNumbers_t *eNums, qboolean portal )
++#else
++									snapshotEntityNumbers_t *eNums, qboolean portal, qboolean skipDuelCull )
++#endif
++{
+ 	int		e, i;
+ 	sharedEntity_t *ent;
+ 	svEntity_t	*svEnt;
+@@ -425,7 +436,11 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
+ 				continue;
+ 			}
+ 		}
+-
++#ifdef DEDICATED
++		if (!skipDuelCull && DuelCull(SV_GentityNum(frame->ps.clientNum), ent, &frame->ps) == 1) {
++			continue;
++		}
++#endif
+ 		svEnt = SV_SvEntityForGentity( ent );
+ 
+ 		// don't double add an entity through portals
+@@ -522,7 +537,11 @@ static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *fra
+ 					continue;
+ 				}
+ 			}
++#ifndef DEDICATED
+ 			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue );
++#else
++			SV_AddEntitiesVisibleFromPoint( ent->s.origin2, frame, eNums, qtrue, skipDuelCull);
++#endif
+ 		}
+ 	}
+ }
+@@ -541,36 +560,28 @@ For viewing through other player's eyes, client can be something other than clie
+ =============
+ */
+ static void SV_BuildClientSnapshot( client_t *client ) {
+-	vec3_t						org;
+-	clientSnapshot_t			*frame;
+-	snapshotEntityNumbers_t		entityNumbers;
+-	int							i;
+-	sharedEntity_t				*ent;
+-	entityState_t				*state;
+-	svEntity_t					*svEnt;
+-	sharedEntity_t				*clent;
+-	playerState_t				*ps;
+-
+-	// bump the counter used to prevent double adding
+-	sv.snapshotCounter++;
+-
+-	// this is the frame we are creating
+-	frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
+-
+-	// clear everything in this snapshot
+-	entityNumbers.numSnapshotEntities = 0;
+-	Com_Memset( frame->areabits, 0, sizeof( frame->areabits ) );
+-
+-	frame->num_entities = 0;
+-
+-	clent = client->gentity;
+-	if ( !clent || client->state == CS_ZOMBIE ) {
+-		return;
+-	}
+-
+-	// grab the current playerState_t
+-	ps = SV_GameClientNum( client - svs.clients );
+-	frame->ps = *ps;
++    vec3_t                      org;
++    clientSnapshot_t            *frame;
++    snapshotEntityNumbers_t     entityNumbers;
++    int                         i;
++    sharedEntity_t              *ent;
++    entityState_t               *state;
++    svEntity_t                  *svEnt;
++    sharedEntity_t              *clent;
++    playerState_t               *ps;
++
++    sv.snapshotCounter++;
++    frame = &client->frames[ client->netchan.outgoingSequence & PACKET_MASK ];
++
++    entityNumbers.numSnapshotEntities = 0;
++    Com_Memset( frame->areabits, 0, sizeof( frame->areabits ) );
++    frame->num_entities = 0;
++
++    clent = client->gentity;
++    if ( !clent || client->state == CS_ZOMBIE ) return;
++
++    ps = SV_GameClientNum( client - svs.clients );
++    frame->ps = *ps;
+ #ifdef _ONEBIT_COMBO
+ 	frame->pDeltaOneBit = &ps->deltaOneBits;
+ 	frame->pDeltaNumBit = &ps->deltaNumBits;
+@@ -599,45 +610,56 @@ static void SV_BuildClientSnapshot( client_t *client ) {
+ 	if ( clientNum < 0 || clientNum >= MAX_GENTITIES ) {
+ 		Com_Error( ERR_DROP, "SV_SvEntityForGentity: bad gEnt" );
+ 	}
+-	svEnt = &sv.svEntities[ clientNum ];
+-	svEnt->snapshotCounter = sv.snapshotCounter;
++svEnt = &sv.svEntities[ frame->ps.clientNum ];
++    svEnt->snapshotCounter = sv.snapshotCounter;
+ 
++    VectorCopy( ps->origin, org );
++    org[2] += ps->viewheight;
+ 
+-	// find the client's viewpoint
+-	VectorCopy( ps->origin, org );
+-	org[2] += ps->viewheight;
+-
+-	// add all the entities directly visible to the eye, which
+-	// may include portal entities that merge other viewpoints
+-	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
+-
+-	// if there were portals visible, there may be out of order entities
+-	// in the list which will need to be resorted for the delta compression
+-	// to work correctly.  This also catches the error condition
+-	// of an entity being included twice.
+-	qsort( entityNumbers.snapshotEntities, entityNumbers.numSnapshotEntities,
+-		sizeof( entityNumbers.snapshotEntities[0] ), SV_QsortEntityNumbers );
+-
+-	// now that all viewpoint's areabits have been OR'd together, invert
+-	// all of them to make it a mask vector, which is what the renderer wants
+-	for ( i = 0 ; i < MAX_MAP_AREA_BYTES/4 ; i++ ) {
+-		((int *)frame->areabits)[i] = ((int *)frame->areabits)[i] ^ -1;
+-	}
++#ifndef DEDICATED
++    SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
++#else
++    SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse, client->disableDuelCull );
++#endif
+ 
+-	// copy the entity states out
+-	frame->num_entities = 0;
+-	frame->first_entity = svs.nextSnapshotEntities;
+-	for ( i = 0 ; i < entityNumbers.numSnapshotEntities ; i++ ) {
+-		ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
+-		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
+-		*state = ent->s;
+-		svs.nextSnapshotEntities++;
+-		// this should never hit, map should always be restarted first in SV_Frame
+-		if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
+-			Com_Error(ERR_FATAL, "svs.nextSnapshotEntities wrapped");
+-		}
+-		frame->num_entities++;
+-	}
++    // IMPROVEMENT: Faster sorting than stock qsort
++    SV_SortSnapshotEntities(entityNumbers.snapshotEntities, entityNumbers.numSnapshotEntities);
++
++    for ( i = 0 ; i < MAX_MAP_AREA_BYTES/4 ; i++ ) {
++        ((int *)frame->areabits)[i] = ((int *)frame->areabits)[i] ^ -1;
++    }
++
++    frame->num_entities = 0;
++    frame->first_entity = svs.nextSnapshotEntities;
++
++    // SAFETY: Never exceed the server's circular entity buffer
++    int count = entityNumbers.numSnapshotEntities;
++    if (count > MAX_SNAPSHOT_ENTITIES) {
++        count = MAX_SNAPSHOT_ENTITIES;
++    }
++
++    for ( i = 0 ; i < count ; i++ ) {
++        ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
++        
++        // SAFETY: Ensure entity wasn't freed mid-frame (prevents segfaults)
++        if ( !ent ) {
++            continue;
++        }
++
++        state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
++        *state = ent->s;
++        
++#ifdef DEDICATED
++        if (DuelCull(client->gentity, ent, ps)) {
++            state->solid = 0;
++        }
++#endif      
++        svs.nextSnapshotEntities++;
++        if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
++            svs.nextSnapshotEntities = 0; // Safer wrap than throwing a fatal error
++        }
++        frame->num_entities++;
++    }
+ }
+ 
+ 
+@@ -658,6 +680,7 @@ static int SV_RateMsec( client_t *client, int messageSize ) {
+ 	if ( messageSize > 1500 ) {
+ 		messageSize = 1500;
+ 	}
++	
+ 	rate = client->rate;
+ 	if ( sv_maxRate->integer ) {
+ 		if ( sv_maxRate->integer < 1000 ) {
+@@ -698,10 +721,12 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
+ 	{
+ 		// send additional message fragments if the last message
+ 		// was too large to send at once
+-		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
++
++		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
+ 		SV_Netchan_TransmitNextFragment(&client->netchan);
+ 	}
+ 
++
+ 	// record information about the message
+ 	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSize = msg->cursize;
+ 	client->frames[client->netchan.outgoingSequence & PACKET_MASK].messageSent = svs.time;
+@@ -791,7 +816,7 @@ void SV_SendClientSnapshot( client_t *client ) {
+ 			MSG_WriteByte(&msg, gamedir[i]);
+ 			i++;
+ 		}
+-		MSG_WriteByte(&msg, 0);
++		MSG_WriteByte(&msg, 0);				
+ 
+ 		// MW - my attempt to fix illegible server message errors caused by
+ 		// packet fragmentation of initial snapshot.
+@@ -800,8 +825,11 @@ void SV_SendClientSnapshot( client_t *client ) {
+ 		{
+ 			// send additional message fragments if the last message
+ 			// was too large to send at once
+-			Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
++
++			// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
+ 			SV_Netchan_TransmitNextFragment(&client->netchan);
++			
++			// Track the work done this frame
+ 		}
+ 
+ 		// record information about the message
+@@ -863,30 +891,31 @@ SV_SendClientMessages
+ =======================
+ */
+ void SV_SendClientMessages( void ) {
+-	int			i;
+-	client_t	*c;
+-
+-	// send a message to each connected client
+-	for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
+-		if (!c->state) {
+-			continue;		// not connected
+-		}
+-
+-		if ( svs.time < c->nextSnapshotTime ) {
+-			continue;		// not time yet
+-		}
+-
+-		// send additional message fragments if the last message
+-		// was too large to send at once
+-		if ( c->netchan.unsentFragments ) {
+-			c->nextSnapshotTime = svs.time +
+-				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
+-			SV_Netchan_TransmitNextFragment( &c->netchan );
+-			continue;
+-		}
+-
+-		// generate and send a new message
+-		SV_SendClientSnapshot( c );
+-	}
+-}
+-
++    int         i;
++    client_t    *c;
++
++    // send a message to each connected client
++    for (i=0, c = svs.clients ; i < sv_maxclients->integer ; i++, c++) {
++        if (!c->state) {
++            continue;       // not connected
++        }
++
++        if ( svs.time < c->nextSnapshotTime ) {
++            continue;       // not time yet
++        }
++
++        // send additional message fragments if the last message
++        // was too large to send at once
++        if ( c->netchan.unsentFragments ) {
++            c->nextSnapshotTime = svs.time +
++                SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
++            SV_Netchan_TransmitNextFragment( &c->netchan );
++            
++
++            continue;
++        }
++
++        // generate and send a new message
++        SV_SendClientSnapshot( c );
++    }
++}
+\ No newline at end of file
+diff --git a/codemp/server/sv_world.cpp b/codemp/server/sv_world.cpp
+index 309f7211..74f8d247 100644
+--- a/codemp/server/sv_world.cpp
++++ b/codemp/server/sv_world.cpp
+@@ -27,6 +27,8 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
+ #include "ghoul2/ghoul2_shared.h"
+ #include "qcommon/cm_public.h"
+ 
++extern cvar_t *sv_snapShotDuelCull;
++
+ /*
+ ================
+ SV_ClipHandleForEntity
+@@ -390,43 +392,44 @@ SV_AreaEntities_r
+ ====================
+ */
+ void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
+-	svEntity_t	*check, *next;
+-	sharedEntity_t *gcheck;
+-
+-	for ( check = node->entities  ; check ; check = next ) {
+-		next = check->nextEntityInWorldSector;
+-
+-		gcheck = SV_GEntityForSvEntity( check );
+-
+-		if ( gcheck->r.absmin[0] > ap->maxs[0]
+-		|| gcheck->r.absmin[1] > ap->maxs[1]
+-		|| gcheck->r.absmin[2] > ap->maxs[2]
+-		|| gcheck->r.absmax[0] < ap->mins[0]
+-		|| gcheck->r.absmax[1] < ap->mins[1]
+-		|| gcheck->r.absmax[2] < ap->mins[2]) {
+-			continue;
+-		}
+-
+-		if ( ap->count == ap->maxcount ) {
+-			Com_DPrintf ("SV_AreaEntities: MAXCOUNT\n");
+-			return;
+-		}
+-
+-		ap->list[ap->count] = check - sv.svEntities;
+-		ap->count++;
+-	}
+-
+-	if (node->axis == -1) {
+-		return;		// terminal node
+-	}
+-
+-	// recurse down both sides
+-	if ( ap->maxs[node->axis] > node->dist ) {
+-		SV_AreaEntities_r ( node->children[0], ap );
+-	}
+-	if ( ap->mins[node->axis] < node->dist ) {
+-		SV_AreaEntities_r ( node->children[1], ap );
+-	}
++    svEntity_t    *check, *next;
++    sharedEntity_t *gcheck;
++
++    if ( !node ) return; 
++
++    for ( check = node->entities  ; check ; check = next ) {
++        next = check->nextEntityInWorldSector;
++        gcheck = SV_GEntityForSvEntity( check );
++
++        // Standard Bounding Box Check (KEEP THIS AS IS for hitbox accuracy)
++        if ( gcheck->r.absmin[0] > ap->maxs[0]
++        || gcheck->r.absmin[1] > ap->maxs[1]
++        || gcheck->r.absmin[2] > ap->maxs[2]
++        || gcheck->r.absmax[0] < ap->mins[0]
++        || gcheck->r.absmax[1] < ap->mins[1]
++        || gcheck->r.absmax[2] < ap->mins[2]) {
++            continue;
++        }
++
++        if ( ap->count == ap->maxcount ) {
++            Com_DPrintf ("SV_AreaEntities: MAXCOUNT\n");
++            return;
++        }
++
++        ap->list[ap->count] = check - sv.svEntities;
++        ap->count++;
++    }
++
++    if (node->axis == -1) {
++        return;
++    }
++
++    if ( ap->maxs[node->axis] > node->dist ) {
++        SV_AreaEntities_r ( node->children[0], ap );
++    }
++    if ( ap->mins[node->axis] < node->dist ) {
++        SV_AreaEntities_r ( node->children[1], ap );
++    }
+ }
+ 
+ /*
+@@ -448,8 +451,6 @@ int SV_AreaEntities( const vec3_t mins, const vec3_t maxs, int *entityList, int
+ 	return ap.count;
+ }
+ 
+-
+-
+ //===========================================================================
+ 
+ 
+@@ -547,6 +548,9 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
+ 
+ 	num = SV_AreaEntities( clip->boxmins, clip->boxmaxs, touchlist, MAX_GENTITIES);
+ 
++	// Fetch the player state once for this trace
++    playerState_t *ps = (clip->passEntityNum >= 0 && clip->passEntityNum < MAX_CLIENTS) ? SV_GameClientNum(clip->passEntityNum) : NULL;
++
+ 	if ( clip->passEntityNum != ENTITYNUM_NONE ) {
+ 		passOwnerNum = ( SV_GentityNum( clip->passEntityNum ) )->r.ownerNum;
+ 		if ( passOwnerNum == ENTITYNUM_NONE ) {
+@@ -567,6 +571,11 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
+ 		}
+ 		touch = SV_GentityNum( touchlist[i] );
+ 
++
++		if ( !touch->r.contents && !touch->r.bmodel ) {
++			continue;
++		}
++
+ 		// see if we should ignore this entity
+ 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
+ 			if ( touchlist[i] == clip->passEntityNum ) {
+@@ -600,6 +609,11 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
+ 			}
+ 		}
+ 
++		// Pass the fetched 'ps' into DuelCull to keep physics checks fast
++		if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
++			continue;
++		}
++
+ 		// if it doesn't have any brushes of a type we
+ 		// are looking for, ignore it
+ 		if ( ! ( clip->contentmask & touch->r.contents ) ) {
+@@ -751,18 +765,26 @@ Ghoul2 Insert Start
+ 			}
+ #endif
+ 
+-			if (com_optvehtrace &&
+-				com_optvehtrace->integer &&
+-				touch->s.eType == ET_NPC &&
+-				touch->s.NPC_class == CLASS_VEHICLE &&
+-				touch->m_pVehicle)
+-			{ //for vehicles cache the transform data.
+-				re->G2API_CollisionDetectCache(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), angles, touch->r.currentOrigin, sv.time, touch->s.number, clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 0, clip->useLod, fRadius);
+-			}
+-			else
+-			{
+-				re->G2API_CollisionDetect(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), angles, touch->r.currentOrigin, sv.time, touch->s.number, clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 0, clip->useLod, fRadius);
+-			}
++			// Engine Optimization: Enable caching for both vehicles AND players.
++            // This reuses bone math calculated earlier in the frame to kill the "tiny skip."
++            if (com_optvehtrace && com_optvehtrace->integer && 
++               (touch->m_pVehicle || touch->s.eType == ET_PLAYER || touch->s.eType == 14 || (touch->s.eFlags & EF_DEAD))) 
++            { 
++                // Using DetectCache prevents the CPU from re-calculating the skeleton 
++                // for every single trace that hits this player in the same frame.
++                re->G2API_CollisionDetectCache(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), 
++                    angles, touch->r.currentOrigin, sv.time, touch->s.number, 
++                    clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 
++                    0, clip->useLod, fRadius);
++            }
++            else
++            {
++                // Standard path for other entities (NPCs, etc.)
++                re->G2API_CollisionDetect(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), 
++                    angles, touch->r.currentOrigin, sv.time, touch->s.number, 
++                    clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 
++                    0, clip->useLod, fRadius);
++            }
+ 
+ 			tN = 0;
+ 			while (tN < MAX_G2_COLLISIONS)
