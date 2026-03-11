@@ -1,64 +1,47 @@
-# Network Performance & Safety Optimizations (Absolute Build)
+# Network Performance & Safety Optimizations (Absolute VPS Build)
 
-This document outlines the specific differences between the optimized "Absolute" networking stack and the stock OpenJK/MB2 engine. These changes prioritize high-throughput stability, CPU hitch elimination, and intelligent entity culling for high-population Movie Battles II servers (up to 32 players).
+This document outlines the specific differences between this optimized "Absolute" networking stack and the stock OpenJK/MB2 engine. These changes prioritize high-throughput stability, the elimination of disk-access hitches, and intelligent entity culling for high-population Movie Battles II servers.
 
-## 🟢 Why the Change? (Modernizing the 1999 Stack)
-The stock engine was built for an era of low bandwidth and small player counts. Modern MB2 environments utilize a massive **49,152 (48KB)** message buffer. In high-intensity 32-player matches, the original engine's "Adaptive Huffman" compression and "Lazy Loading" filesystem create severe bottlenecks.
+## 🟢 Why the Change?
+Standard engines utilize "Lazy Loading," searching the disk for models only when a player joins. With MB2's massive asset library (800+ models), this creates severe bottlenecks.
 
-* **The Problem:** The engine stalls to re-calculate compression trees or search the disk for 700+ player models. This leads to "muddy" movement and 100ms+ "entry hitches" when players join.
-* **The Solution:** This build transitions to **Static High-Burst Networking** and **Proactive RAM Caching**. It ensures the network pipe and filesystem are optimized to handle 32-player bursts instantly without blocking the main thread.
+* **The Problem:** The server stalls to perform disk I/O when players join with un-cached skins. This leads to 100ms+ "entry hitches" that affect everyone on the server.
+* **The Solution:** This build implements **Proactive RAM Caching** and **Soft Entity Culling**. It ensures the filesystem is "warm" before players join and that the network stream remains smooth for high-latency (200ms+) clients.
 
 ---
 
-## 1. Static Huffman Compression (CPU Efficiency)
-**Implementation:** `huffman_static.cpp` / `msg.cpp`
+## 1. Proactive Asset Indexing & RAM Warming
+**Function:** `sv_main.cpp` (`SV_IndexAllModels`)
 
-* **Elimination of Adaptive Hitches:** Replaces the stock `msgHuff` adaptive tree with pre-computed Static Huffman lookup tables.
-* **Constant-Time Processing:** The server no longer spends CPU cycles "learning" frequency patterns or re-balancing trees during heavy combat.
-* **Surgical Bypass:** The system bypasses `Huff_addRef` and `Huff_Init` calls, removing the primary cause of server-side micro-stutters during player join/spawn events.
+* **Instant Path Resolution:** Replaces the engine's expensive "Linear PK3 Scan" with a high-performance `std::unordered_map` lookup table for all 800+ `.glm` files.
+* **Page Cache Warming (Hitch Elimination):** At startup, the engine proactively "touches" model files via `FS_FOpenFileRead`. This pulls the model data into the **Linux OS Page Cache (RAM)** before any players join.
+* **VPS Safety Circuit:** Includes a **100MB RAM budget** for pre-caching. This prevents the server from triggering an Out-Of-Memory (OOM) shutdown on 2GB VPS systems while ensuring the most popular models are always "hot" in memory.
 
-## 2. Command Spam Gatekeeper (Security)
-**Function:** `sv_client.cpp` (`SV_ExecuteClientCommand`)
+## 2. Dedicated Server "Duel Isolation" (Soft-Cull)
+**Implementation:** `sv_snapshot.cpp` / `duel_cull.cpp`
 
-* **Early-Exit Logic:** Implements a high-performance "Gatekeeper" that checks for command spam *before* the engine performs expensive string tokenization.
-* **Flood Protection:** If flood protection is tripped, common chat/voice commands are discarded instantly. This prevents malicious users from lagging the server by spamming the `say` or `engage` commands.
-* **Enhanced Packet Reliability:** Modified `SV_ClientCommand` to always return `qtrue`, ensuring that even if a text command is muted for spam, the player's movement data (UserMove) in the same packet is still processed.
+* **Intelligent Ghosting:** Instead of "Hard Culling" (completely deleting entities from the packet), this build uses a "Soft Cull" approach.
+* **Rend2 Stability:** By continuing to send the "Origin" (position) data for hidden players, client-side renderers (Rend2/Vulkan) can maintain smooth interpolation. This eliminates the "teleporting/snapping" bug common on high-ping connections.
+* **Collision Bypass:** Bystanders are automatically set to `solid = 0` for dueling players, allowing seamless movement through crowded areas without physics "stuttering."
 
-## 3. Dedicated Server "Duel Isolation" (DuelCull)
-**Implementation:** `duel_cull.cpp` / `sv_snapshot.cpp` / `sv_world.cpp`
+## 3. High-Burst Snapshot Efficiency
+**Function:** `sv_snapshot.cpp` (`SV_BuildClientSnapshot`)
 
-* **Intelligent Culling:** Automatically hides players from those involved in a private duel. This significantly reduces the data footprint for dueling players.
-* **Direct Pointer Passing:** Replaces slow internal table lookups with direct `playerState_t` pointer passing in `sv_world.cpp` to keep physics and snapshot generation loops fast.
-* **NPC Persistence:** Ensures that `ET_NPC` (training dummies/bots) are never culled, maintaining visibility for all players.
-* **Performance Gate:** Controlled via `sv_snapShotDuelCull`. If disabled, the logic exits in a single cycle to save CPU.
+* **Optimized Loop:** The snapshot generation loop has been stripped of redundant `#ifdef DEDICATED` blocks to ensure consistent performance.
+* **Event Silencing:** During Soft-Culling, `state->event` is cleared to prevent "ghost" sounds or sparks from duels leaking to players who shouldn't see or hear them, further reducing unnecessary network traffic.
 
-## 4. "Warm Cache" Snapshot Optimization
-**Function:** `sv_snapshot.cpp` (`SV_EmitPacketEntities`)
-
-* **Byte-Level Comparison:** Uses `std::equal` to perform a lightning-fast memory check between current and previous entity states.
-* **Delta Efficiency:** If an entity hasn't changed at the byte level, the engine writes a single "no change" bit and skips field-by-field delta calculation, maximizing headroom within the 48KB buffer.
-
-## 5. Engine-Side Logging
+## 4. Engine-Side Logging & Diagnostics
 **Function:** `sv_main.cpp` (`SV_LogPrintf`)
 
-* **Direct I/O:** Provides a bridge for the engine to write `DuelStart` and `DuelEnd` events directly to `games.log` or a custom log file (e.g., `duel-games.log`).
-* **Timestamp Accuracy:** Syncs logs with the engine's internal time (e.g., `3:09`) for precise match review.
-* **Reliability:** Uses `fputs` instead of `fprintf` for faster, unformatted string writing, ensuring logs are preserved even in high-stress scenarios.
-
-## 6. Proactive Asset Indexing & Pre-Caching
-**Function:** `sv_main.cpp` (`SV_IndexAllModels`) / `sv_world.cpp`
-
-* **Instant Path Resolution:** Replaces the engine's expensive "Linear PK3 Scan" with a high-performance `std::unordered_map` lookup table.
-* **Page Cache Warming (Hitch Elimination):** At startup, the engine proactively "touches" all 700+ `.glm` files. This pulls the model data into the **OS Page Cache (RAM)** before any players join. 
-* **Zero-Hitch Player Entry:** Because model data is already "hot" in RAM, the engine initializes new players in microseconds, eliminating the 100-200ms "entry hitch" common in MB2.
-* **Transform Caching:** Works in tandem with `G2API_CollisionDetectCache` in `sv_world.cpp` to ensure that once a model is located, its skeletal transforms are reused across all player traces in a single frame.
+* **Direct I/O Logging:** Provides a high-speed bridge to write `DuelStart` and `DuelEnd` events directly to the server logs.
+* **Reliability:** Uses optimized buffer flushing to ensure logs are preserved in real-time, allowing external web-tools or Discord bots to track match results without delay.
 
 ---
 
-### Implementation Summary
-* **Standard:** Compiled using **C++14** for cross-platform compatibility (Visual Studio & GCC).
-* **OS Support:** Verified for **OpenJK/MB2** on **Ubuntu 24.04** and **Windows Server**.
-* **Impact:** By combining Static Huffman compression with proactive RAM caching and intelligent culling, the Absolute Build ensures that the networking stack and filesystem are no longer bottlenecks in high-population environments.
+## 🛠 Implementation Summary
+* **Standard:** Compiled using **C++14** for modern Linux VPS environments.
+* **Impact:** By combining proactive RAM warming with intelligent soft-culling, the Absolute Build ensures the networking stack and filesystem are no longer bottlenecks, even with over 800 player models installed.
+* **Config:** Controlled server-side; no client-side changes or CVARs are required for players to benefit from the increased smoothness.
 
 
 # OpenJK
