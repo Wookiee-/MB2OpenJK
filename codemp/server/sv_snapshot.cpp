@@ -24,9 +24,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server.h"
 #include "qcommon/cm_public.h"
 
-#undef EF_NODRAW
-#define EF_NODRAW (1 << 19)
-
 /*
 =============================================================================
 
@@ -638,13 +635,10 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		*state = ent->s;
 		
 		if (DuelCull(client->gentity, ent)) {
-			// 1. Hide the model to save rendering cycles
-			state->eFlags |= EF_NODRAW;
-
-			// 2. Set to SOLID_NOT (0) to allow walking through
+			// 1 Set to SOLID_NOT (0) to allow walking through
 			state->solid = 0; 
 
-			// 3. Clear events to prevent ghost sounds/sparks
+			// 2. Clear events to prevent ghost sounds/sparks
 			state->event = 0;
 		}
 
