@@ -33,8 +33,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "ghoul2/ghoul2_shared.h"
 #include "sv_gameapi.h"
-#include <unordered_map>
-#include <string>
 
 serverStatic_t	svs;				// persistant server info
 server_t		sv;					// local server
@@ -94,73 +92,6 @@ EVENT MESSAGES
 
 =============================================================================
 */
-
-// Global map to store model name -> relative engine path
-static std::unordered_map<std::string, std::string> modelLocationMap;
-
-void SV_IndexAllModels() {
-    // 1. CLEAR OLD DATA
-    modelLocationMap.clear();
-    
-    char        **filelist;
-    int         i, n;
-    const char  *basePath = "models/players";
-
-    // 2. DISK SCAN: Build a map of every player model on the server
-    filelist = FS_ListFiles( basePath, "/", &n );
-    if (!filelist) return;
-
-    for ( i = 0 ; i < n ; i++ ) {
-        // Skip current/parent directory links
-        if ( !filelist[i] || !Q_stricmp( filelist[i], "." ) || !Q_stricmp( filelist[i], ".." ) ) continue;
-
-        char subPath[MAX_OSPATH];
-        int numFiles;
-        Com_sprintf( subPath, sizeof( subPath ), "models/players/%s", filelist[i] );
-        
-        // Find all .glm files in the character folder
-        char **subFiles = FS_ListFiles( subPath, ".glm", &numFiles );
-        if (subFiles) {
-            for ( int j = 0; j < numFiles; j++ ) {
-                char fullGLMPath[MAX_OSPATH];
-                Com_sprintf(fullGLMPath, sizeof(fullGLMPath), "%s/%s", subPath, subFiles[j]);
-                
-                // UNIQUE KEY: Folder + Filename (e.g., "luke/model.glm" vs "luke_rotj/model.glm")
-                // This prevents different Lukes from clobbering each other in the map.
-                std::string uniqueKey = std::string(filelist[i]) + "/" + subFiles[j];
-                modelLocationMap[uniqueKey] = fullGLMPath;
-            }
-            FS_FreeFileList( subFiles );
-        }
-    }
-    FS_FreeFileList( filelist );
-
-    // 3. SERVER-SIDE PRE-LOADER (The "Hitch Killer")
-    Com_Printf("--- MB2 Optimizer: Pre-parsing %zu assets ---\n", modelLocationMap.size());
-
-    int modelsRegistered = 0;
-    long long totalBytesSeen = 0;
-    const long long MAX_BYTES_LIMIT = 100 * 1024 * 1024; 
-
-    for (const auto& entry : modelLocationMap) {
-    fileHandle_t f;
-    // FS_FOpenFileRead returns the file size and handles the disk 'hit'
-    int fileSize = FS_FOpenFileRead(entry.second.c_str(), &f, qfalse);
-    
-    if (f) {
-        // We don't need to index it in a configstring yet.
-        // Just opening it forces the OS/VPS to pull the data from disk to RAM.
-        totalBytesSeen += fileSize;
-        modelsRegistered++;
-        FS_FCloseFile(f); 
-    }
-
-    if (totalBytesSeen >= MAX_BYTES_LIMIT) {
-        break;
-    }
-}
-    Com_Printf("--- Pre-Caching Complete. Deep-Registered %d models (~%lld bytes) ---\n", modelsRegistered, totalBytesSeen);
-}
 
 /*
 ===============
