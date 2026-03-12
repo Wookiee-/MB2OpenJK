@@ -712,7 +712,7 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	{
 		// send additional message fragments if the last message
 		// was too large to send at once
-		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+		// Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
 		SV_Netchan_TransmitNextFragment(&client->netchan);
 	}
 
@@ -814,7 +814,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 		{
 			// send additional message fragments if the last message
 			// was too large to send at once
-			Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+			// Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
 			SV_Netchan_TransmitNextFragment(&client->netchan);
 		}
 
