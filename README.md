@@ -17,12 +17,10 @@ Standard engines utilize "Lazy Loading," searching the disk for models only when
 * **Page Cache Warming (Hitch Elimination):** At startup, the engine proactively "touches" model files via `FS_FOpenFileRead`. This pulls the model data into the **Linux OS Page Cache (RAM)** before any players join.
 * **VPS Safety Circuit:** Includes a **100MB RAM budget** for pre-caching. This prevents the server from triggering an Out-Of-Memory (OOM) shutdown on 2GB VPS systems while ensuring the most popular models are always "hot" in memory.
 
-## 2. Dedicated Server "Duel Isolation" (Soft-Cull)
-**Implementation:** `sv_snapshot.cpp` / `duel_cull.cpp`
-
-* **Intelligent Ghosting:** Instead of "Hard Culling" (completely deleting entities from the packet), this build uses a "Soft Cull" approach.
-* **Rend2 Stability:** By continuing to send the "Origin" (position) data for hidden players, client-side renderers (Rend2/Vulkan) can maintain smooth interpolation. This eliminates the "teleporting/snapping" bug common on high-ping connections.
-* **Collision Bypass:** Bystanders are automatically set to `solid = 0` for dueling players, allowing seamless movement through crowded areas without physics "stuttering."
+### 2. Duel Isolation (Soft-Cull & Physics Bypass)
+* **Visuals:** Players are ghosted via `EF_NODRAW` in the snapshot.
+* **Physics:** Implemented in `sv_world.cpp` inside `SV_ClipMoveToEntities`.
+* **Result:** Bystanders can physically pass through active duels. This prevents the "Invisible Wall" and "Rubber-banding" issues caused by server-side collision checks.
 
 ## 3. High-Burst Snapshot Efficiency
 **Function:** `sv_snapshot.cpp` (`SV_BuildClientSnapshot`)
