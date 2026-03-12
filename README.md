@@ -1,46 +1,30 @@
 # Network Performance & Safety Optimizations (Absolute VPS Build)
 
-This document outlines the specific differences between this optimized "Absolute" networking stack and the stock OpenJK/MB2 engine. These changes prioritize high-throughput stability, the elimination of disk-access hitches, and intelligent entity culling for high-population Movie Battles II servers.
+This build is optimized for high-population Movie Battles II servers VPS environments with ZRAM enabled.
 
-## 🟢 Why the Change?
-Standard engines utilize "Lazy Loading," searching the disk for models only when a player joins. With MB2's massive asset library (800+ models), this creates severe bottlenecks.
+## 🟢 Core Optimizations
 
-* **The Problem:** The server stalls to perform disk I/O when players join with un-cached skins. This leads to 100ms+ "entry hitches" that affect everyone on the server.
-* **The Solution:** This build implements **Proactive RAM Caching** and **Soft Entity Culling**. It ensures the filesystem is "warm" before players join and that the network stream remains smooth for high-latency (200ms+) clients.
+### 1. Duel Isolation "Soft-Cull"
+* **Function:** `sv_snapshot.cpp` / `duel_cull.cpp`
+* **Visuals:** Uses `EF_NODRAW` to hide private duels from bystanders, significantly reducing client-side rendering strain and keeping netgraphs smooth at high latency (200ms+).
+* **Audio:** Silences `state->event` to prevent "ghost" saber sounds from leaking to bystanders.
 
----
+### 2. Physics Bypass (Anti-Sticking)
+* **Function:** `sv_world.cpp` (`SV_ClipMoveToEntities`)
+* **Logic:** Dynamically overrides the server's collision engine. If a bystander encounters a duelist, the server skips the collision check (`state->solid = 0`).
+* **Result:** No more "Invisible Walls" or rubber-banding. Players can physically pass through active private duels without interruption.
 
-## 1. Proactive Asset Indexing & RAM Warming
-**Function:** `sv_main.cpp` (`SV_IndexAllModels`)
-
-* **Instant Path Resolution:** Replaces the engine's expensive "Linear PK3 Scan" with a high-performance `std::unordered_map` lookup table for all 800+ `.glm` files.
-* **Page Cache Warming (Hitch Elimination):** At startup, the engine proactively "touches" model files via `FS_FOpenFileRead`. This pulls the model data into the **Linux OS Page Cache (RAM)** before any players join.
-* **VPS Safety Circuit:** Includes a **100MB RAM budget** for pre-caching. This prevents the server from triggering an Out-Of-Memory (OOM) shutdown on 2GB VPS systems while ensuring the most popular models are always "hot" in memory.
-
-### 2. Duel Isolation (Soft-Cull & Physics Bypass)
-* **Visuals:** Players are ghosted via `EF_NODRAW` in the snapshot.
-* **Physics:** Implemented in `sv_world.cpp` inside `SV_ClipMoveToEntities`.
-* **Result:** Bystanders can physically pass through active duels. This prevents the "Invisible Wall" and "Rubber-banding" issues caused by server-side collision checks.
-
-## 3. High-Burst Snapshot Efficiency
-**Function:** `sv_snapshot.cpp` (`SV_BuildClientSnapshot`)
-
-* **Optimized Loop:** The snapshot generation loop has been stripped of redundant `#ifdef DEDICATED` blocks to ensure consistent performance.
-* **Event Silencing:** During Soft-Culling, `state->event` is cleared to prevent "ghost" sounds or sparks from duels leaking to players who shouldn't see or hear them, further reducing unnecessary network traffic.
-
-## 4. Engine-Side Logging & Diagnostics
-**Function:** `sv_main.cpp` (`SV_LogPrintf`)
-
-* **Direct I/O Logging:** Provides a high-speed bridge to write `DuelStart` and `DuelEnd` events directly to the server logs.
-* **Reliability:** Uses optimized buffer flushing to ensure logs are preserved in real-time, allowing external web-tools or Discord bots to track match results without delay.
+### 3. Engine-Side Duel Logging
+* **Function:** `sv_main.cpp` (`SV_LogPrintf`)
+* **Logic:** Bridges engine-level duel events directly to `games.log`.
+* **Performance:** Uses optimized, non-blocking I/O for real-time tracking of `DuelStart` and `DuelEnd` results.
 
 ---
+### Usage
+* **Cvar:** `sv_snapShotDuelCull 1` (Enable Isolation)
+* **Optimization:** Leverages System ZRAM for asset caching; no manual pre-
 
-## 🛠 Implementation Summary
-* **Standard:** Compiled using **C++14** for modern Linux VPS environments.
-* **Impact:** By combining proactive RAM warming with intelligent soft-culling, the Absolute Build ensures the networking stack and filesystem are no longer bottlenecks, even with over 800 player models installed.
-* **Config:** Controlled server-side; no client-side changes or CVARs are required for players to benefit from the increased smoothness.
-
+---
 
 # OpenJK
 
