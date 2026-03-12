@@ -24,6 +24,9 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server.h"
 #include "qcommon/cm_public.h"
 
+#undef EF_NODRAW
+#define EF_NODRAW (1 << 19)
+
 /*
 =============================================================================
 

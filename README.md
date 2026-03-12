@@ -14,7 +14,12 @@ This build is optimized for high-population Movie Battles II servers VPS environ
 * **Logic:** Dynamically overrides the server's collision engine. If a bystander encounters a duelist, the server skips the collision check (`state->solid = 0`).
 * **Result:** No more "Invisible Walls" or rubber-banding. Players can physically pass through active private duels without interruption.
 
-### 3. Engine-Side Duel Logging
+### 3. Low-Level Performance Gate (Syscall Optimization)
+* **Function:** `net_main.cpp` (`NET_SendPacket`)
+* **Logic:** Prevents the engine from executing outbound network calls when the data payload is empty (`length <= 0`).
+* **Result:** Drastically reduces **Kernel Context Switching** and SoftIRQ overhead. This stabilizes the CPU "System" load on Ubuntu/Linux, preventing micro-stutters during high-traffic FA or Legends matches.
+
+### 4. Engine-Side Duel Logging
 * **Function:** `sv_main.cpp` (`SV_LogPrintf`)
 * **Logic:** Bridges engine-level duel events directly to `games.log`.
 * **Performance:** Uses optimized, non-blocking I/O for real-time tracking of `DuelStart` and `DuelEnd` results.
