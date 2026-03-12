@@ -22,8 +22,7 @@ This build is optimized for high-population Movie Battles II servers VPS environ
 ---
 ### Usage
 * **Cvar:** `sv_snapShotDuelCull 1` (Enable Isolation)
-* **Optimization:** Leverages System ZRAM for asset caching; no manual pre-
-
+* **Optimization:** Leverages System ZRAM for asset caching; no manual pre-caching required.
 ---
 
 # OpenJK
