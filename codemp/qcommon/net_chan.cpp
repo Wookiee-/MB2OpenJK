@@ -560,12 +560,6 @@ void NET_SendLoopPacket (netsrc_t sock, int length, const void *data, netadr_t t
 
 void NET_SendPacket( netsrc_t sock, int length, const void *data, netadr_t to ) {
 
-	// PERFORMANCE GATE: Exit immediately if there is no data to send.
-    // This prevents unnecessary syscalls and kernel context switching.
-    if ( length <= 0 ) {
-        return;
-    }
-
 	// sequenced packets are shown in netchan, so just show oob
 	if ( showpackets->integer && *(int *)data == -1 )	{
 		Com_Printf ("send packet %4i\n", length);

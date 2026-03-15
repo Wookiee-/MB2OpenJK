@@ -635,11 +635,7 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		*state = ent->s;
 		
 		if (DuelCull(client->gentity, ent)) {
-			// 1 Set to SOLID_NOT (0) to allow walking through
 			state->solid = 0; 
-
-			// 2. Clear events to prevent ghost sounds/sparks
-			state->event = 0;
 		}
 
 		svs.nextSnapshotEntities++;
