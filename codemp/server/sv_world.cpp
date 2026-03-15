@@ -568,11 +568,12 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		touch = SV_GentityNum( touchlist[i] );
 
 		// THE "GHOST" PHYSICS FIX:
-        // We use clip->passEntityNum to identify the person moving.
-        // If they are a bystander and 'touch' is a duelist, we skip collision.
-        if ( DuelCull( SV_GentityNum(clip->passEntityNum), touch ) ) {
-            continue;
-        }
+		if ( DuelCull( SV_GentityNum(clip->passEntityNum), touch ) ) {
+			// Allows bystanders to walk through, but sabers (MASK_SHOT) still hit.
+			if ( !(clip->contentmask & MASK_SHOT) ) {
+				continue;
+			}
+		}
 
 		// see if we should ignore this entity
 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
