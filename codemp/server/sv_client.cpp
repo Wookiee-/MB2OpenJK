@@ -385,6 +385,9 @@ void SV_DropClient( client_t *drop, const char *reason ) {
 	// this will remove the body, among other things
 	GVM_ClientDisconnect( drop - svs.clients );
 
+	// Wipe the duel name cache for this slot
+    DuelCull_ClearCache( drop - svs.clients );
+
 	// add the disconnect command
 	SV_SendServerCommand( drop, "disconnect \"%s\"", reason );
 
@@ -1233,6 +1236,10 @@ static void SV_UpdateUserinfo_f( client_t *cl ) {
 	}
 
 	SV_UserinfoChanged( cl );
+
+	// Clear cache so the next log uses the new name
+    DuelCull_ClearCache( cl - svs.clients );
+	
 	// call prog code to allow overrides
 	GVM_ClientUserinfoChanged( cl - svs.clients );
 }

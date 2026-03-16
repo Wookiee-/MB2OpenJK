@@ -55,6 +55,13 @@ static void GetPlayerName(int clientNum, char *outName, int maxSize) {
     Q_strncpyz(outName, cachedNames[clientNum], maxSize);
 }
 
+// THE CLEAR CACHE FUNCTION (Hook this in sv_client.cpp)
+void DuelCull_ClearCache(int clientNum) {
+    if (clientNum >= 0 && clientNum < MAX_CLIENTS) {
+        cachedNames[clientNum][0] = '\0';
+    }
+}
+
 int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
     if (!sv_snapShotDuelCull->integer) return 0;
 

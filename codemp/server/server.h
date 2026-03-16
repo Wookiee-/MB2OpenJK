@@ -49,7 +49,6 @@ typedef struct svEntity_s {
 	int			lastCluster;		// if all the clusters don't fit in clusternums
 	int			areanum, areanum2;
 	int			snapshotCounter;	// used to prevent double adding from portal views
-	int 		snapshotTime;
 } svEntity_t;
 
 typedef enum {
