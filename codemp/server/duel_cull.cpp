@@ -5,6 +5,7 @@
 // Persistent state trackers
 static qboolean oldDuelState[MAX_CLIENTS] = { qfalse };
 static int      duelOpponent[MAX_CLIENTS] = { 0 };
+static char     cachedNames[MAX_CLIENTS][MAX_NETNAME];
 
 static qboolean isPlayer(sharedEntity_t *ent) {
     return (ent->s.eType == ET_PLAYER) ? qtrue : qfalse;
@@ -34,30 +35,24 @@ static sharedEntity_t *FlattenEntity(sharedEntity_t *ent) {
 
 // Helper to extract clean names for logging
 static void GetPlayerName(int clientNum, char *outName, int maxSize) {
-    char configstring[MAX_CONFIGSTRINGS];
-    const char *value;
-
     if (clientNum < 0 || clientNum >= MAX_CLIENTS) {
         Q_strncpyz(outName, "Unknown", maxSize);
         return;
     }
 
-    SV_GetConfigstring(CS_PLAYERS + clientNum, configstring, sizeof(configstring));
-    value = Info_ValueForKey(configstring, "n");
-
-    if (!value || !value[0]) {
-        client_t *cl = &svs.clients[clientNum];
-        if (cl && cl->name[0]) value = cl->name;
-    }
-
-    if (value && value[0]) {
+    // If the cache is empty, fill it once.
+    if (!cachedNames[clientNum][0]) {
+        char configstring[MAX_CONFIGSTRINGS];
+        SV_GetConfigstring(CS_PLAYERS + clientNum, configstring, sizeof(configstring));
+        const char *value = Info_ValueForKey(configstring, "n");
+        
         char cleanName[MAX_NETNAME];
-        Q_strncpyz(cleanName, value, sizeof(cleanName));
+        Q_strncpyz(cleanName, (value && value[0]) ? value : "Player", sizeof(cleanName));
         Q_CleanStr(cleanName); 
-        Q_strncpyz(outName, cleanName, maxSize);
-    } else {
-        Com_sprintf(outName, maxSize, "Player %d", clientNum);
+        Q_strncpyz(cachedNames[clientNum], cleanName, MAX_NETNAME);
     }
+
+    Q_strncpyz(outName, cachedNames[clientNum], maxSize);
 }
 
 int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
