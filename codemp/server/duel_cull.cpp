@@ -1,5 +1,6 @@
 #include "qcommon/qcommon.h"
-#include "duel_cull.h"
+#include "server.h"         // This provides the actual definitions for the structs
+#include "duel_cull.h"      // This provides your custom signature
 #include "sv_gameapi.h"
 
 // Persistent state trackers
@@ -62,7 +63,7 @@ void DuelCull_ClearCache(int clientNum) {
     }
 }
 
-int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
+int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, moveclip_t *clip) {
     if (!sv_snapShotDuelCull->integer) return 0;
 
     // Resolve 'touch' to its owner (e.g., saber missile -> player owner)
@@ -112,6 +113,12 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
     // Safety: Always keep map objects solid
     if (resolvedTouch->s.eType != ET_PLAYER && resolvedTouch->s.eType != ET_NPC) {
         return 0;
+    }
+
+    // NEW: FORCE STANDARD BOUNDING BOX FOR COMBAT
+    // This ensures saber-clashes and hits feel 100% normal.
+    if (clip && (clip->contentmask & (MASK_SHOT | CONTENTS_BODY))) {
+        return 0; 
     }
 
     int touchOwnerNum = resolvedTouch->s.number;

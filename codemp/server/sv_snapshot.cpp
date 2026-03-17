@@ -634,7 +634,7 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
 		*state = ent->s;
 		
-		if (DuelCull(client->gentity, ent)) {
+		if (DuelCull(client->gentity, ent, NULL)) {
 			state->solid = 0; 
 		}
 
