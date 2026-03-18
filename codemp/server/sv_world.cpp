@@ -567,14 +567,20 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		}
 		touch = SV_GentityNum( touchlist[i] );
 
-		// ONLY RUN THIS IF WE HAVE A VALID MOVER
-        if ( clip->passEntityNum >= 0 && clip->passEntityNum < MAX_CLIENTS ) {
-            if (DuelCull(SV_GentityNum(clip->passEntityNum), touch) == 2) {
-                if ( !(clip->contentmask & (MASK_SHOT | CONTENTS_BODY)) ) {
-                    continue; // GHOSTED
-                }
-            }
-        }
+		// 1. Ensure the mover is a valid client
+		if ( clip->passEntityNum >= 0 && clip->passEntityNum < MAX_CLIENTS ) {
+			
+			// 2. THE INTEGRITY CHECK: 
+			// If the engine is looking for a Saber hit (CONTENTS_LIGHTSABER) 
+			// or a Shot (MASK_SHOT), we NEVER skip. We want the hit to register!
+			if ( !(clip->contentmask & (CONTENTS_LIGHTSABER | MASK_SHOT)) ) {
+				
+				// 3. Only then do we check if we should ghost the PLAYER movement
+				if (DuelCull(SV_GentityNum(clip->passEntityNum), touch) == 2) {
+					continue; 
+				}
+			}
+		}
 
 		// see if we should ignore this entity
 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
