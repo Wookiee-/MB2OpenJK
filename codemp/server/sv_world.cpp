@@ -452,14 +452,14 @@ int SV_AreaEntities( const vec3_t mins, const vec3_t maxs, int *entityList, int 
 
 //===========================================================================
 
-/*
+
 typedef struct moveclip_s {
 	vec3_t		boxmins, boxmaxs;// enclose the test object along entire move
 	const float	*mins;
-	const float *maxs;	// size of the moving object */
+	const float *maxs;	// size of the moving object 
 /*
 Ghoul2 Insert Start
-*/ /*
+*/ 
 	vec3_t		start;
 
 	vec3_t		end;
@@ -470,11 +470,11 @@ Ghoul2 Insert Start
 
 	int			traceFlags;
 	int			useLod;
-	trace_t		trace;			// make sure nothing goes under here for Ghoul2 collision purposes */
+	trace_t		trace;			// make sure nothing goes under here for Ghoul2 collision purposes 
 /*
 Ghoul2 Insert End
-*/ /*
-} moveclip_t;  */
+*/ 
+} moveclip_t;  
 
 
 /*
@@ -547,21 +547,18 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 
 	num = SV_AreaEntities( clip->boxmins, clip->boxmaxs, touchlist, MAX_GENTITIES);
 
-	// Safe lookup of passOwnerNum and svFlags
 	if ( clip->passEntityNum != ENTITYNUM_NONE ) {
-		sharedEntity_t *passEnt = SV_GentityNum( clip->passEntityNum );
-		passOwnerNum = passEnt->r.ownerNum;
+		passOwnerNum = ( SV_GentityNum( clip->passEntityNum ) )->r.ownerNum;
 		if ( passOwnerNum == ENTITYNUM_NONE ) {
 			passOwnerNum = -1;
 		}
-
-		// SAFETY FIX: This original line must stay inside this IF block
-		if ( passEnt->r.svFlags & SVF_OWNERNOTSHARED )
-		{
-			thisOwnerShared = 0;
-		}
 	} else {
 		passOwnerNum = -1;
+	}
+
+	if ( SV_GentityNum(clip->passEntityNum)->r.svFlags & SVF_OWNERNOTSHARED )
+	{
+		thisOwnerShared = 0;
 	}
 
 	for ( i=0 ; i<num ; i++ ) {
@@ -572,7 +569,7 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 
 		// ONLY RUN THIS IF WE HAVE A VALID MOVER
         if ( clip->passEntityNum >= 0 && clip->passEntityNum < MAX_CLIENTS ) {
-            if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, clip) == 2) {
+            if (DuelCull(SV_GentityNum(clip->passEntityNum), touch) == 2) {
                 if ( !(clip->contentmask & (MASK_SHOT | CONTENTS_BODY)) ) {
                     continue; // GHOSTED
                 }

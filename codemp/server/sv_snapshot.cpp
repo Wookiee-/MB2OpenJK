@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 #include "qcommon/cm_public.h"
+#include "duel_cull.h"
 
 /*
 =============================================================================
@@ -552,19 +553,6 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 	sharedEntity_t				*clent;
 	playerState_t				*ps;
 
-	static int lastUpdateFrame = -1;
-    if (lastUpdateFrame != sv.time) {
-        for (int d = 0; d < MAX_CLIENTS; d++) {
-            playerState_t *dps = SV_GameClientNum(d);
-            if (dps && dps->duelInProgress) {
-                sv_duelTable[d] = dps->duelIndex;
-            } else {
-                sv_duelTable[d] = -1;
-            }
-        }
-        lastUpdateFrame = sv.time;
-    }
-
 	// bump the counter used to prevent double adding
 	sv.snapshotCounter++;
 
@@ -647,7 +635,7 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
 		*state = ent->s;
 		
-		if (DuelCull(client->gentity, ent, (moveclip_t *)NULL)) {
+		if (DuelCull(client->gentity, ent) == 2) {
 			state->solid = 0; 
 		}
 

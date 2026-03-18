@@ -285,7 +285,6 @@ extern	cvar_t	*sv_snapShotDuelCull;
 
 extern	serverBan_t serverBans[SERVER_MAXBANS];
 extern	int serverBansCount;
-extern  int sv_duelTable[MAX_CLIENTS];
 
 //===========================================================
 

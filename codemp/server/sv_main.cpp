@@ -78,7 +78,6 @@ cvar_t	*sv_snapShotDuelCull;
 
 serverBan_t serverBans[SERVER_MAXBANS];
 int serverBansCount = 0;
-int sv_duelTable[MAX_CLIENTS];
 
 /*
 =============================================================================
