@@ -126,8 +126,6 @@ NET
 
 #define	MAX_RELIABLE_COMMANDS	128			// max string commands buffered for restransmit
 
-#define MAX_RELIABLE_BURST    128
-
 typedef enum {
 	NS_CLIENT,
 	NS_SERVER

@@ -26,9 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server.h"
 #include "ghoul2/ghoul2_shared.h"
 #include "qcommon/cm_public.h"
-
-extern cvar_t *sv_snapShotDuelCull;
-
+#include "duel_cull.h"
 /*
 ================
 SV_ClipHandleForEntity
@@ -392,51 +390,43 @@ SV_AreaEntities_r
 ====================
 */
 void SV_AreaEntities_r( worldSector_t *node, areaParms_t *ap ) {
-    svEntity_t    *check, *next;
-    sharedEntity_t *gcheck;
+	svEntity_t	*check, *next;
+	sharedEntity_t *gcheck;
 
-    for ( check = node->entities  ; check ; check = next ) {
-        next = check->nextEntityInWorldSector;
+	for ( check = node->entities  ; check ; check = next ) {
+		next = check->nextEntityInWorldSector;
 
-        gcheck = SV_GEntityForSvEntity( check );
+		gcheck = SV_GEntityForSvEntity( check );
 
-        // PERFORMANCE GATE: Duel Culling
-        // Uses the DuelCull function and sv_snapShotDuelCull cvar from server.h
-        if (sv_snapShotDuelCull->integer) {
-             if (DuelCull(NULL, gcheck, NULL)) {
-                 // continue; 
-             }
-        }
+		if ( gcheck->r.absmin[0] > ap->maxs[0]
+		|| gcheck->r.absmin[1] > ap->maxs[1]
+		|| gcheck->r.absmin[2] > ap->maxs[2]
+		|| gcheck->r.absmax[0] < ap->mins[0]
+		|| gcheck->r.absmax[1] < ap->mins[1]
+		|| gcheck->r.absmax[2] < ap->mins[2]) {
+			continue;
+		}
 
-        if ( gcheck->r.absmin[0] > ap->maxs[0]
-        || gcheck->r.absmin[1] > ap->maxs[1]
-        || gcheck->r.absmin[2] > ap->maxs[2]
-        || gcheck->r.absmax[0] < ap->mins[0]
-        || gcheck->r.absmax[1] < ap->mins[1]
-        || gcheck->r.absmax[2] < ap->mins[2]) {
-            continue;
-        }
+		if ( ap->count == ap->maxcount ) {
+			Com_DPrintf ("SV_AreaEntities: MAXCOUNT\n");
+			return;
+		}
 
-        if ( ap->count == ap->maxcount ) {
-            Com_DPrintf ("SV_AreaEntities: MAXCOUNT\n");
-            return;
-        }
+		ap->list[ap->count] = check - sv.svEntities;
+		ap->count++;
+	}
 
-        ap->list[ap->count] = check - sv.svEntities;
-        ap->count++;
-    }
+	if (node->axis == -1) {
+		return;		// terminal node
+	}
 
-    if (node->axis == -1) {
-        return;        // terminal node
-    }
-
-    // recurse down both sides
-    if ( ap->maxs[node->axis] > node->dist ) {
-        SV_AreaEntities_r ( node->children[0], ap );
-    }
-    if ( ap->mins[node->axis] < node->dist ) {
-        SV_AreaEntities_r ( node->children[1], ap );
-    }
+	// recurse down both sides
+	if ( ap->maxs[node->axis] > node->dist ) {
+		SV_AreaEntities_r ( node->children[0], ap );
+	}
+	if ( ap->mins[node->axis] < node->dist ) {
+		SV_AreaEntities_r ( node->children[1], ap );
+	}
 }
 
 /*
@@ -445,32 +435,31 @@ SV_AreaEntities
 ================
 */
 int SV_AreaEntities( const vec3_t mins, const vec3_t maxs, int *entityList, int maxcount ) {
-    areaParms_t        ap;
+	areaParms_t		ap;
 
-    // Use const_cast to fix "assignment of read-only location" on Linux 
-    // This allows the stock pointer assignment to work on all players.
-    *(float **)&ap.mins = (float *)mins;
-    *(float **)&ap.maxs = (float *)maxs;
-    ap.list = entityList;
-    ap.count = 0;
-    ap.maxcount = maxcount;
+	ap.mins = mins;
+	ap.maxs = maxs;
+	ap.list = entityList;
+	ap.count = 0;
+	ap.maxcount = maxcount;
 
-    // Using the global suggested by the compiler to fix the scope error
-    SV_AreaEntities_r( sv_worldSectors, &ap );
+	SV_AreaEntities_r( sv_worldSectors, &ap );
 
-    return ap.count;
+	return ap.count;
 }
+
+
 
 //===========================================================================
 
-
+/*
 typedef struct moveclip_s {
 	vec3_t		boxmins, boxmaxs;// enclose the test object along entire move
 	const float	*mins;
-	const float *maxs;	// size of the moving object
+	const float *maxs;	// size of the moving object */
 /*
 Ghoul2 Insert Start
-*/
+*/ /*
 	vec3_t		start;
 
 	vec3_t		end;
@@ -481,11 +470,11 @@ Ghoul2 Insert Start
 
 	int			traceFlags;
 	int			useLod;
-	trace_t		trace;			// make sure nothing goes under here for Ghoul2 collision purposes
+	trace_t		trace;			// make sure nothing goes under here for Ghoul2 collision purposes */
 /*
 Ghoul2 Insert End
-*/
-} moveclip_t;
+*/ /*
+} moveclip_t;  */
 
 
 /*
@@ -558,9 +547,6 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 
 	num = SV_AreaEntities( clip->boxmins, clip->boxmaxs, touchlist, MAX_GENTITIES);
 
-	// Fetch the player state once for this trace
-    playerState_t *ps = (clip->passEntityNum >= 0 && clip->passEntityNum < MAX_CLIENTS) ? SV_GameClientNum(clip->passEntityNum) : NULL;
-
 	if ( clip->passEntityNum != ENTITYNUM_NONE ) {
 		passOwnerNum = ( SV_GentityNum( clip->passEntityNum ) )->r.ownerNum;
 		if ( passOwnerNum == ENTITYNUM_NONE ) {
@@ -581,9 +567,18 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		}
 		touch = SV_GentityNum( touchlist[i] );
 
+		// THE "GHOST" PHYSICS FIX:
+		int cullType = DuelCull( SV_GentityNum(clip->passEntityNum), touch, clip );
 
-		if ( !touch->r.contents && !touch->r.bmodel ) {
+		if ( cullType == 1 ) { // Full Hide
 			continue;
+		}
+
+		if ( cullType == 2 ) { // Ghost / Walk-through
+			// Only 'continue' (skip) if it's NOT a combat hit
+			if ( !(clip->contentmask & (MASK_SHOT | CONTENTS_BODY)) ) {
+				continue;
+			}
 		}
 
 		// see if we should ignore this entity
@@ -619,11 +614,6 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			}
 		}
 
-		// Pass the fetched 'ps' into DuelCull to keep physics checks fast
-		if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, ps)) {
-			continue;
-		}
-
 		// if it doesn't have any brushes of a type we
 		// are looking for, ignore it
 		if ( ! ( clip->contentmask & touch->r.contents ) ) {
@@ -633,7 +623,7 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		if ((clip->contentmask == (MASK_SHOT|CONTENTS_LIGHTSABER) || clip->contentmask == MASK_SHOT) && (touch->r.contents > 0 && (touch->r.contents & CONTENTS_NOSHOT)))
 		{
 			continue;
-		}
+		}	
 
 		// might intersect, so do an exact clip
 		clipHandle = SV_ClipHandleForEntity (touch);
@@ -775,26 +765,18 @@ Ghoul2 Insert Start
 			}
 #endif
 
-			// Engine Optimization: Enable caching for both vehicles AND players.
-            // This reuses bone math calculated earlier in the frame to kill the "tiny skip."
-            if (com_optvehtrace && com_optvehtrace->integer && 
-               (touch->m_pVehicle || touch->s.eType == ET_PLAYER || touch->s.eType == 14 || (touch->s.eFlags & EF_DEAD))) 
-            { 
-                // Using DetectCache prevents the CPU from re-calculating the skeleton 
-                // for every single trace that hits this player in the same frame.
-                re->G2API_CollisionDetectCache(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), 
-                    angles, touch->r.currentOrigin, sv.time, touch->s.number, 
-                    clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 
-                    0, clip->useLod, fRadius);
-            }
-            else
-            {
-                // Standard path for other entities (NPCs, etc.)
-                re->G2API_CollisionDetect(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), 
-                    angles, touch->r.currentOrigin, sv.time, touch->s.number, 
-                    clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 
-                    0, clip->useLod, fRadius);
-            }
+			if (com_optvehtrace &&
+				com_optvehtrace->integer &&
+				touch->s.eType == ET_NPC &&
+				touch->s.NPC_class == CLASS_VEHICLE &&
+				touch->m_pVehicle)
+			{ //for vehicles cache the transform data.
+				re->G2API_CollisionDetectCache(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), angles, touch->r.currentOrigin, sv.time, touch->s.number, clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 0, clip->useLod, fRadius);
+			}
+			else
+			{
+				re->G2API_CollisionDetect(G2Trace, *((CGhoul2Info_v *)touch->ghoul2), angles, touch->r.currentOrigin, sv.time, touch->s.number, clip->start, clip->end, touch->modelScale, G2VertSpaceServer, 0, clip->useLod, fRadius);
+			}
 
 			tN = 0;
 			while (tN < MAX_G2_COLLISIONS)

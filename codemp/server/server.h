@@ -30,8 +30,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "rd-common/tr_public.h"
 #include "server/duel_cull.h"
 
-extern int DuelCull(sharedEntity_t *a, sharedEntity_t *b, playerState_t *ps);
-
 //=============================================================================
 
 #define	PERS_SCORE				0		// !!! MUST NOT CHANGE, SERVER AND

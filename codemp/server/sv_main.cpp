@@ -33,8 +33,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "ghoul2/ghoul2_shared.h"
 #include "sv_gameapi.h"
-#include <unordered_map>
-#include <string>
 
 serverStatic_t	svs;				// persistant server info
 server_t		sv;					// local server
@@ -94,60 +92,6 @@ EVENT MESSAGES
 
 =============================================================================
 */
-
-// Global map to store model name -> relative engine path
-static std::unordered_map<std::string, std::string> modelLocationMap;
-
-void SV_IndexAllModels() {
-    char		**filelist;
-    int			i, n;
-    const char	*basePath = "models/players";
-
-    // 1. Get a list of all folders in models/players (e.g., "luke", "reborn")
-    // The engine's FS_ListFiles automatically looks in base and MBII PK3s.
-    filelist = FS_ListFiles( basePath, "/", &n );
-
-    for ( i = 0 ; i < n ; i++ ) {
-        // Skip current/parent dir markers
-        if ( !filelist[i] || !Q_stricmp( filelist[i], "." ) || !Q_stricmp( filelist[i], ".." ) ) {
-            continue;
-        }
-
-        char subPath[MAX_OSPATH];
-        int numFiles;
-        
-        // Construct path: models/players/luke
-        Com_sprintf( subPath, sizeof( subPath ), "models/players/%s", filelist[i] );
-        
-        // 2. Look for .glm files inside that specific folder
-        char **subFiles = FS_ListFiles( subPath, ".glm", &numFiles );
-        
-        for ( int j = 0; j < numFiles; j++ ) {
-            char fullGLMPath[MAX_OSPATH];
-            
-            // Result: models/players/luke/model.glm
-            Com_sprintf(fullGLMPath, sizeof(fullGLMPath), "%s/%s", subPath, subFiles[j]);
-            
-            // Index it for instant lookup later
-            modelLocationMap[subFiles[j]] = fullGLMPath;
-        }
-        FS_FreeFileList( subFiles );
-    }
-    FS_FreeFileList( filelist );
-
-	// 3. MB2 PRE-CACHING LOOP
-	Com_Printf("--- MB2 Optimized: Pre-Caching %zu assets ---\n", modelLocationMap.size());
-
-	for (const auto& entry : modelLocationMap) {
-		fileHandle_t f;
-		// qfalse ensures we only touch LOCAL files and don't trigger redirects
-		int len = FS_FOpenFileRead(entry.second.c_str(), &f, qfalse);
-		if (len > 0) {
-			FS_FCloseFile(f); // Close immediately; we only wanted to "warm" the OS cache
-		}
-	}
-	Com_Printf("--- Pre-Caching Complete. Server is ready for players. ---\n");
-}
 
 /*
 ===============
@@ -1176,39 +1120,6 @@ void SV_CheckCvars( void ) {
 	}
 }
 
-void SV_FramePacing( int frameMsec ) {
-    static int nextFrameTime = 0;
-    int now;
-
-    if ( nextFrameTime == 0 ) {
-        nextFrameTime = Sys_Milliseconds();
-    }
-
-    while ( 1 ) {
-        now = Sys_Milliseconds();
-
-        if ( now >= nextFrameTime ) {
-            break;
-        }
-
-        // Cross-platform sleep/yield/spin logic
-        if ( nextFrameTime - now > 2 ) {
-            Sys_Sleep( 1 ); 
-        } 
-        else if ( nextFrameTime - now > 1 ) {
-            Sys_Sleep( 0 );
-        }
-        else {
-            #ifdef _WIN32
-                YieldProcessor(); 
-            #else
-                __builtin_ia32_pause(); 
-            #endif
-        }
-    }
-    nextFrameTime += frameMsec;
-}
-
 /*
 ==================
 SV_FrameMsec
@@ -1272,9 +1183,6 @@ void SV_Frame( int msec ) {
 		frameMsec = 1;
 	}
 
-	// CALL THE PACER HERE
-    SV_FramePacing( frameMsec );
-
 	sv.timeResidual += msec;
 
 	if (!com_dedicated->integer) SV_BotFrame( sv.time + sv.timeResidual );
@@ -1311,12 +1219,6 @@ void SV_Frame( int msec ) {
 		cvar_modifiedFlags &= ~CVAR_SYSTEMINFO;
 	}
 
-	static qboolean modelsIndexed = qfalse;
-    if (!modelsIndexed) {
-        SV_IndexAllModels(); // Call your low-RAM indexing function
-        modelsIndexed = qtrue;
-    }
-
 	if ( com_speeds->integer ) {
 		startTime = Sys_Milliseconds ();
 	} else {
@@ -1327,7 +1229,7 @@ void SV_Frame( int msec ) {
 	SV_CalcPings();
 
 	if (com_dedicated->integer) SV_BotFrame( sv.time );
-	
+
 	// run the game simulation in chunks
 	while ( sv.timeResidual >= frameMsec ) {
 		sv.timeResidual -= frameMsec;
@@ -1356,6 +1258,57 @@ void SV_Frame( int msec ) {
 
 	// send a heartbeat to the master if needed
 	SV_MasterHeartbeat();
+}
+
+/*
+==================
+SV_LogPrintf
+
+New bridge function to write directly to games.log from the engine side.
+==================
+*/
+
+void SV_LogPrintf( const char *fmt, ... ) {
+    va_list     argptr;
+    static char text[1024];
+    static char timestampedText[1150];
+
+    va_start (argptr, fmt);
+    int textLen = Q_vsnprintf (text, sizeof(text), fmt, argptr);
+    va_end (argptr);
+
+    if ( textLen <= 0 ) return;
+
+    // 1. ANNOUNCEMENTS: Print to console for HUD/Players
+    int seconds = svs.time / 1000;
+    int tsLen = Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", seconds / 60, seconds % 60, text);
+    Com_Printf("%s", timestampedText);
+
+    // 2. C++14 COMPATIBLE SEARCH:
+    // This works on Windows/Linux without needing the C++17 header.
+	bool isDuel = (Q_stristr(text, "DuelStart") || Q_stristr(text, "DuelEnd"));
+	bool isChat = (Q_stristr(text, "say") || Q_stristr(text, "SMOD smsay"));
+
+    if (!isDuel && !isChat) {
+        return; 
+    }
+
+    // 3. OPTIMIZED WRITING
+    if (!duelLog) {
+        char fullPath[MAX_OSPATH];
+        const char *homePath = Cvar_VariableString("fs_homepath");
+        const char *logName = Cvar_VariableString("g_log");
+        if (homePath && homePath[0] && logName && logName[0]) {
+            Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
+            duelLog = fopen(fullPath, "a");
+        }
+    }
+
+    if (duelLog) {
+        // Still use fwrite for speed and fflush for your Python script
+        std::fwrite(timestampedText, 1, tsLen, duelLog);
+        std::fflush(duelLog); 
+    }
 }
 //============================================================================
 
