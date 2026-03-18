@@ -6,29 +6,25 @@
 int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch, moveclip_t *clip) {
     if (!sv_snapShotDuelCull->integer) return 0;
 
-    // 1. Standard Boundary Box Safety
-    // Sabers, shots, and body-impact traces are ALWAYS solid.
-    if (clip && (clip->contentmask & (MASK_SHOT | CONTENTS_BODY))) {
-        return 0; 
-    }
-
-    // 2. NEUTRAL CASE: Both are bystanders
-    // Neither in a duel? Stay solid (Standard Box).
-    if (ent->s_duelMask == 0 && touch->s_duelMask == 0) {
+    // Safety: Only cull for actual clients (0-31)
+    if (ent->s.number >= MAX_CLIENTS || touch->s.number >= MAX_CLIENTS) {
         return 0;
     }
 
-    // 3. DUEL CASE: Initiator vs. Opponent
-    // If we are a matched pair, stay solid to each other.
-    if (ent->s_duelMask == 1 && touch->s_duelMask == 2) return 0;
-    if (ent->s_duelMask == 2 && touch->s_duelMask == 1) return 0;
+    int entOpponent = sv_duelTable[ent->s.number];
+    int touchOpponent = sv_duelTable[touch->s.number];
 
-    // 4. CULL CASE: Anything else involving a duelist
-    // If one person is in a duel and the other isn't (or is in a DIFFERENT duel),
-    // we return 2 to ghost them.
-    if (ent->s_duelMask != 0 || touch->s_duelMask != 0) {
-        return 2; 
+    // CASE 1: Neither is in a duel -> Both are visible
+    if (entOpponent == -1 && touchOpponent == -1) {
+        return 0;
     }
 
-    return 0;
+    // CASE 2: They are dueling each other -> Both are visible to each other
+    if (entOpponent == touch->s.number && touchOpponent == ent->s.number) {
+        return 0;
+    }
+
+    // CASE 3: One (or both) are in a duel, but not with each other
+    // Result: Return 2 (Ghost/Cull)
+    return 2; 
 }

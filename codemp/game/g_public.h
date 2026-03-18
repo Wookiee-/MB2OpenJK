@@ -252,7 +252,6 @@ typedef struct sharedEntity_s {
 	int				failedWaypointCheckTime;
 
 	int				next_roff_time; //rww - npc's need to know when they're getting roff'd
-	int 			s_duelMask; // 0=None, 1=Duelist, 2=Opponent
 } sharedEntity_t;
 
 #if !defined(_GAME) && defined(__cplusplus)

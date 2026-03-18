@@ -547,37 +547,35 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 
 	num = SV_AreaEntities( clip->boxmins, clip->boxmaxs, touchlist, MAX_GENTITIES);
 
+	// Safe lookup of passOwnerNum and svFlags
 	if ( clip->passEntityNum != ENTITYNUM_NONE ) {
-		passOwnerNum = ( SV_GentityNum( clip->passEntityNum ) )->r.ownerNum;
+		sharedEntity_t *passEnt = SV_GentityNum( clip->passEntityNum );
+		passOwnerNum = passEnt->r.ownerNum;
 		if ( passOwnerNum == ENTITYNUM_NONE ) {
 			passOwnerNum = -1;
+		}
+
+		// SAFETY FIX: This original line must stay inside this IF block
+		if ( passEnt->r.svFlags & SVF_OWNERNOTSHARED )
+		{
+			thisOwnerShared = 0;
 		}
 	} else {
 		passOwnerNum = -1;
 	}
 
-	if ( SV_GentityNum(clip->passEntityNum)->r.svFlags & SVF_OWNERNOTSHARED )
-	{
-		thisOwnerShared = 0;
-	}
+	for ( i=0 ; i<num ; i++ ) {
+		if ( clip->trace.allsolid ) {
+			return;
+		}
+		touch = SV_GentityNum( touchlist[i] );
 
-	sharedEntity_t *mover = SV_GentityNum(clip->passEntityNum);
-    playerState_t *mps = (clip->passEntityNum < MAX_CLIENTS) ? SV_GameClientNum(clip->passEntityNum) : NULL;
-
-    // Set mover mask once
-    if (mover) mover->s_duelMask = (mps && mps->duelInProgress) ? 1 : 0;
-
-    for ( i=0 ; i<num ; i++ ) {
-        touch = SV_GentityNum( touchlist[i] );
-
-        // --- NEW JIT MASK UPDATE ---
-        if (touch->s.number < MAX_CLIENTS) {
-            playerState_t *tps = SV_GameClientNum(touch->s.number);
-            if (tps && tps->duelInProgress) {
-                // Is 'touch' the opponent of the 'mover'?
-                touch->s_duelMask = (mps && mps->duelInProgress && mps->duelIndex == touch->s.number) ? 2 : 1;
-            } else {
-                touch->s_duelMask = 0;
+		// ONLY RUN THIS IF WE HAVE A VALID MOVER
+        if ( clip->passEntityNum >= 0 && clip->passEntityNum < MAX_CLIENTS ) {
+            if (DuelCull(SV_GentityNum(clip->passEntityNum), touch, clip) == 2) {
+                if ( !(clip->contentmask & (MASK_SHOT | CONTENTS_BODY)) ) {
+                    continue; // GHOSTED
+                }
             }
         }
 

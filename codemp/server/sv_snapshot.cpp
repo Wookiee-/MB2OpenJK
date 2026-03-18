@@ -552,6 +552,19 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 	sharedEntity_t				*clent;
 	playerState_t				*ps;
 
+	static int lastUpdateFrame = -1;
+    if (lastUpdateFrame != sv.time) {
+        for (int d = 0; d < MAX_CLIENTS; d++) {
+            playerState_t *dps = SV_GameClientNum(d);
+            if (dps && dps->duelInProgress) {
+                sv_duelTable[d] = dps->duelIndex;
+            } else {
+                sv_duelTable[d] = -1;
+            }
+        }
+        lastUpdateFrame = sv.time;
+    }
+
 	// bump the counter used to prevent double adding
 	sv.snapshotCounter++;
 
@@ -629,24 +642,10 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 	// copy the entity states out
 	frame->num_entities = 0;
 	frame->first_entity = svs.nextSnapshotEntities;
-
-	playerState_t *rps = SV_GameClientNum( client - svs.clients ); // Receiver PS
-    client->gentity->s_duelMask = (rps && rps->duelInProgress) ? 1 : 0;
-	
 	for ( i = 0 ; i < entityNumbers.numSnapshotEntities ; i++ ) {
 		ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
 		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
 		*state = ent->s;
-
-		if (ent->s.number < MAX_CLIENTS) {
-            playerState_t *eps = SV_GameClientNum(ent->s.number);
-            if (eps && eps->duelInProgress) {
-                // If this entity is the receiver's opponent, mark as 2. Otherwise 1.
-                ent->s_duelMask = (rps && rps->duelInProgress && rps->duelIndex == ent->s.number) ? 2 : 1;
-            } else {
-                ent->s_duelMask = 0;
-            }
-        }
 		
 		if (DuelCull(client->gentity, ent, (moveclip_t *)NULL)) {
 			state->solid = 0; 
