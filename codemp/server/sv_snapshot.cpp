@@ -363,8 +363,7 @@ SV_AddEntitiesVisibleFromPoint
 */
 float g_svCullDist = -1.0f;
 static void SV_AddEntitiesVisibleFromPoint( vec3_t origin, clientSnapshot_t *frame,
-									snapshotEntityNumbers_t *eNums, qboolean portal )
-{
+									snapshotEntityNumbers_t *eNums, qboolean portal ) {
 	int		e, i;
 	sharedEntity_t *ent;
 	svEntity_t	*svEnt;
@@ -635,7 +634,7 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
 		*state = ent->s;
 		
-		if (DuelCull(client->gentity, ent) == 2) {
+		if (DuelCull(client->gentity, ent)) {
 			state->solid = 0; 
 		}
 

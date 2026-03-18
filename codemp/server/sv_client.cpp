@@ -34,7 +34,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #endif
 
 #include "server/sv_gameapi.h"
-#include <algorithm>
 
 static void SV_CloseDownload( client_t *cl );
 
