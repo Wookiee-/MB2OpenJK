@@ -561,25 +561,25 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		thisOwnerShared = 0;
 	}
 
-	for ( i=0 ; i<num ; i++ ) {
-		if ( clip->trace.allsolid ) {
-			return;
-		}
-		touch = SV_GentityNum( touchlist[i] );
+	sharedEntity_t *mover = SV_GentityNum(clip->passEntityNum);
+    playerState_t *mps = (clip->passEntityNum < MAX_CLIENTS) ? SV_GameClientNum(clip->passEntityNum) : NULL;
 
-		// THE "GHOST" PHYSICS FIX:
-		int cullType = DuelCull( SV_GentityNum(clip->passEntityNum), touch, clip );
+    // Set mover mask once
+    if (mover) mover->s_duelMask = (mps && mps->duelInProgress) ? 1 : 0;
 
-		if ( cullType == 1 ) { // Full Hide
-			continue;
-		}
+    for ( i=0 ; i<num ; i++ ) {
+        touch = SV_GentityNum( touchlist[i] );
 
-		if ( cullType == 2 ) { // Ghost / Walk-through
-			// Only 'continue' (skip) if it's NOT a combat hit
-			if ( !(clip->contentmask & (MASK_SHOT | CONTENTS_BODY)) ) {
-				continue;
-			}
-		}
+        // --- NEW JIT MASK UPDATE ---
+        if (touch->s.number < MAX_CLIENTS) {
+            playerState_t *tps = SV_GameClientNum(touch->s.number);
+            if (tps && tps->duelInProgress) {
+                // Is 'touch' the opponent of the 'mover'?
+                touch->s_duelMask = (mps && mps->duelInProgress && mps->duelIndex == touch->s.number) ? 2 : 1;
+            } else {
+                touch->s_duelMask = 0;
+            }
+        }
 
 		// see if we should ignore this entity
 		if ( clip->passEntityNum != ENTITYNUM_NONE ) {
