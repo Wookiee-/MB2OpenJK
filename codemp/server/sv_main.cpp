@@ -21,11 +21,6 @@ You should have received a copy of the GNU General Public License
 along with this program; if not, see <http://www.gnu.org/licenses/>.
 ===========================================================================
 */
-#ifdef _WIN32
-    #include <windows.h>
-#else
-    #include <unistd.h>
-#endif
 
 #include <stdio.h>
 #include <time.h>
@@ -1258,57 +1253,6 @@ void SV_Frame( int msec ) {
 
 	// send a heartbeat to the master if needed
 	SV_MasterHeartbeat();
-}
-
-/*
-==================
-SV_LogPrintf
-
-New bridge function to write directly to games.log from the engine side.
-==================
-*/
-
-void SV_LogPrintf( const char *fmt, ... ) {
-    va_list     argptr;
-    static char text[1024];
-    static char timestampedText[1150];
-
-    va_start (argptr, fmt);
-    int textLen = Q_vsnprintf (text, sizeof(text), fmt, argptr);
-    va_end (argptr);
-
-    if ( textLen <= 0 ) return;
-
-    // 1. ANNOUNCEMENTS: Print to console for HUD/Players
-    int seconds = svs.time / 1000;
-    int tsLen = Com_sprintf(timestampedText, sizeof(timestampedText), "%3i:%02i %s", seconds / 60, seconds % 60, text);
-    Com_Printf("%s", timestampedText);
-
-    // 2. C++14 COMPATIBLE SEARCH:
-    // This works on Windows/Linux without needing the C++17 header.
-	bool isDuel = (Q_stristr(text, "DuelStart") || Q_stristr(text, "DuelEnd"));
-	bool isChat = (Q_stristr(text, "say") || Q_stristr(text, "SMOD smsay"));
-
-    if (!isDuel && !isChat) {
-        return; 
-    }
-
-    // 3. OPTIMIZED WRITING
-    if (!duelLog) {
-        char fullPath[MAX_OSPATH];
-        const char *homePath = Cvar_VariableString("fs_homepath");
-        const char *logName = Cvar_VariableString("g_log");
-        if (homePath && homePath[0] && logName && logName[0]) {
-            Com_sprintf(fullPath, sizeof(fullPath), "%s/MBII/%s", homePath, logName);
-            duelLog = fopen(fullPath, "a");
-        }
-    }
-
-    if (duelLog) {
-        // Still use fwrite for speed and fflush for your Python script
-        std::fwrite(timestampedText, 1, tsLen, duelLog);
-        std::fflush(duelLog); 
-    }
 }
 //============================================================================
 
