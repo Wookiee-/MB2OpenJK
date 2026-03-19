@@ -635,7 +635,8 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		*state = ent->s;
 		
         if (DuelCull(client->gentity, ent) == 2) {
-            state->solid = 0; 
+            state->solid = 0;
+			state->contents = 0; 
         }
 
 		svs.nextSnapshotEntities++;
