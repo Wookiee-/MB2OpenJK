@@ -639,7 +639,7 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		if ( ent->s.number < MAX_CLIENTS ) {
 			// Force the client to use smooth interpolation between snapshots.
 			// This eliminates "micro-stutter" in Rend2 and Vulkan.
-			state->pos.trType = TR_INTERPOLATE;
+			state->pos.trType = TR_LINEAR;
 			state->apos.trType = TR_INTERPOLATE;
 			
 			// 3. THE GHOSTING LOGIC
