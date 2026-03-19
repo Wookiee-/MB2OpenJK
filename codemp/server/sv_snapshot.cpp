@@ -634,10 +634,20 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
 		*state = ent->s;
 		
-        if (DuelCull(client->gentity, ent) == 2) {
-            state->solid = 0;
-			state->contents = 0; 
-        }
+        // 2. THE GLOBAL SMOOTHNESS FIX
+		// Apply to all human players (0 to MAX_CLIENTS)
+		if ( ent->s.number < MAX_CLIENTS ) {
+			// Force the client to use smooth interpolation between snapshots.
+			// This eliminates "micro-stutter" in Rend2 and Vulkan.
+			state->pos.trType = TR_INTERPOLATE;
+			state->apos.trType = TR_INTERPOLATE;
+			
+			// 3. THE GHOSTING LOGIC
+			// Now apply the specific "Solid" cull for bystanders
+			if (DuelCull(client->gentity, ent) == 2) {
+				state->solid = 0; 
+			}
+		}
 
 		svs.nextSnapshotEntities++;
 		// this should never hit, map should always be restarted first in SV_Frame
