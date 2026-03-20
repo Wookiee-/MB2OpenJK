@@ -23,7 +23,6 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 #include "qcommon/cm_public.h"
-#include "duel_cull.h"
 
 /*
 =============================================================================
