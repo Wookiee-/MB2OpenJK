@@ -612,7 +612,7 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		}
 		
 		// 2. Only if it's a "Body" collision do we do the DuelCull lookup
-		if ( DuelCull(SV_GentityNum(clip->passEntityNum), touch) ) {
+		if ( DuelCull(SV_GentityNum(clip->passEntityNum), touch) == 2 ) {
 			continue; 
 		}
 

@@ -27,29 +27,31 @@ int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
         return 0;
     }
 
-    // 4. State Access: Get playerState through the gentity pointer
-    if (!svs.clients[ent->s.number].gentity || !svs.clients[touch->s.number].gentity) {
-        return 0;
-    }
-
-    playerState_t *entPs = svs.clients[ent->s.number].gentity->playerState;
-    playerState_t *touchPs = svs.clients[touch->s.number].gentity->playerState;
+    // 4. State Access: Use the pointers passed directly to the function
+    // This is faster and avoids the 'Slot 15' sync issue
+    playerState_t *entPs = (playerState_t *)ent->playerState;
+    playerState_t *touchPs = (playerState_t *)touch->playerState;
 
     if (!entPs || !touchPs) {
         return 0;
     }
 
     // 5. Duel Logic:
-    // If either player is not dueling, or they are dueling each other, remain SOLID.
-    if (!entPs->duelInProgress || !touchPs->duelInProgress) {
-        return 0; 
+    // Check if BOTH players are in a duel. 
+    // If one is a bystander (duelInProgress == 0), they should GHOST through duelists.
+    
+    // If both are dueling each other, they stay SOLID.
+    if (entPs->duelInProgress && touchPs->duelInProgress) {
+        if (entPs->duelIndex == touch->s.number && touchPs->duelIndex == ent->s.number) {
+            return 0; 
+        }
+        return 2; // They are dueling, but not each other. Ghost.
     }
 
-    if (entPs->duelIndex == touch->s.number && touchPs->duelIndex == ent->s.number) {
-        return 0; 
+    // If one is dueling and the other isn't, they GHOST.
+    if (entPs->duelInProgress || touchPs->duelInProgress) {
+        return 2;
     }
 
-    // 6. The "Cull" Case: 
-    // One or both are in a duel, but not with each other. Pass through.
-    return 2; 
+    return 0;
 }
