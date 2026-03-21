@@ -611,12 +611,8 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 			continue;
 		}
 		
-		if ((touch->r.contents & CONTENTS_BODY) && (clip->contentmask & MASK_PLAYERSOLID)) {
-		} 
-		else {
-			if ( DuelCull(SV_GentityNum(clip->passEntityNum), touch) == 2 ) {
-				continue; 
-			}
+		if ( DuelCull(SV_GentityNum(clip->passEntityNum), touch) == 2 ) {
+			continue; 
 		}
 
 		// might intersect, so do an exact clip

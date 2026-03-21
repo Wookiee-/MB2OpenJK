@@ -10,46 +10,41 @@ Returns 2 to bypass collision (Ghosting).
 ================
 */
 int DuelCull(sharedEntity_t *ent, sharedEntity_t *touch) {
-    // 1. Master Switch: If cvar is 0, behave exactly like vanilla OpenJK
-    if (!sv_snapShotDuelCull || sv_snapShotDuelCull->integer == 0) {
-        return 0;
-    }
+    // 1. Instant Exit (Fastest check first)
+    // Always check the cvar first to avoid logic overhead if disabled
+    if (!sv_snapShotDuelCull || !sv_snapShotDuelCull->integer) return 0;
+    if (ent == touch) return 0;
 
-    // 2. Identity: Don't check collision against yourself
-    if (ent == touch) {
-        return 0;
-    }
-
-    // 3. Safety: Only apply duel logic if both entities are players (0 to sv_maxclients-1)
-    // This prevents ghosting through walls, floors, or projectiles.
-    if (ent->s.number < 0 || ent->s.number >= sv_maxclients->integer || 
-        touch->s.number < 0 || touch->s.number >= sv_maxclients->integer) {
-        return 0;
-    }
-
-    // 4. State Access: Use the pointers passed directly to the function
-    // This is faster and avoids the 'Slot 15' sync issue
+    // 2. Direct State Access
+    // We cast to playerState_t because the grep confirms this is the source of truth
     playerState_t *entPs = (playerState_t *)ent->playerState;
     playerState_t *touchPs = (playerState_t *)touch->playerState;
 
+    // 3. Safety Check
+    // Critical: ent->playerState will be NULL for map objects and non-player entities
     if (!entPs || !touchPs) {
         return 0;
     }
 
-    // 5. Duel Logic:
-    // Check if BOTH players are in a duel. 
-    // If one is a bystander (duelInProgress == 0), they should GHOST through duelists.
-    
-    // If both are dueling each other, they stay SOLID.
-    if (entPs->duelInProgress && touchPs->duelInProgress) {
-        if (entPs->duelIndex == touch->s.number && touchPs->duelIndex == ent->s.number) {
+    // 4. Local Cache Logic
+    // Accessing the struct members once and storing them in local variables 
+    // reduces the number of memory lookups the 3700X has to perform.
+    int entDuel = entPs->duelInProgress;
+    int touchDuel = touchPs->duelInProgress;
+
+    // 5. Duel Resolution
+    if (entDuel && touchDuel) {
+        // If they are dueling each other, they remain SOLID
+        if (entPs->duelIndex == touch->s.number) {
             return 0; 
         }
-        return 2; // They are dueling, but not each other. Ghost.
+        // Dueling different people: GHOST
+        return 2; 
     }
 
-    // If one is dueling and the other isn't, they GHOST.
-    if (entPs->duelInProgress || touchPs->duelInProgress) {
+    // If one is in a duel and the other isn't: GHOST
+    // This stops bystanders from being "glue" for duelists
+    if (entDuel || touchDuel) {
         return 2;
     }
 
