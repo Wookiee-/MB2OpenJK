@@ -890,8 +890,8 @@ void SV_SendClientMessages( void ) {
 				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
 			SV_Netchan_TransmitNextFragment( &c->netchan );
 			continue;
-		}
-
+		} 
+		
 		// generate and send a new message
 		SV_SendClientSnapshot( c );
 	}

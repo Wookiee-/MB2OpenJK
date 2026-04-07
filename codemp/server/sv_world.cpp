@@ -27,6 +27,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "ghoul2/ghoul2_shared.h"
 #include "qcommon/cm_public.h"
 #include "duel_cull.h"
+#include "sv_unlagged.h"
 /*
 ================
 SV_ClipHandleForEntity
@@ -874,10 +875,37 @@ Ghoul2 Insert End
 		}
 	}
 
-	// clip to other solid entities
-	SV_ClipMoveToEntities ( &clip );
+	// --- AUTOMATED ENGINE-SIDE UNLAGGED ---
+    // Since we can't set sv_unlagged_client from the game module,
+    // we identify the attacker by the passEntityNum.
+    client_t *attacker = NULL;
 
-	*results = clip.trace;
+    // In JKA, the person swinging/firing is passed as the passEntityNum
+    if (passEntityNum >= 0 && passEntityNum < sv_maxclients->integer) {
+        attacker = &svs.clients[passEntityNum];
+    }
+
+    // Only rewind if it's a COMBAT trace (Saber or Shot) and we have a valid attacker
+    if ( (contentmask & (MASK_SHOT | CONTENTS_LIGHTSABER)) && 
+         attacker && attacker->state == CS_ACTIVE && attacker->ping > 0 ) {
+        
+        SV_Unlagged_RewindAll( attacker->ping );
+        SV_ClipMoveToEntities ( &clip );
+        SV_Unlagged_RestoreAll();
+    } else if ( (contentmask & (MASK_SHOT | CONTENTS_LIGHTSABER)) && 
+                sv_unlagged_client && sv_unlagged_client->ping > 0 ) {
+        
+        // Fallback: apply the same filter to the manual pointer check
+        SV_Unlagged_RewindAll( sv_unlagged_client->ping );
+        SV_ClipMoveToEntities ( &clip );
+        SV_Unlagged_RestoreAll();
+    } else {
+        // No combat identified (or no ping), run standard lagged trace
+        // This covers doors, triggers, and UI "look-at" traces
+        SV_ClipMoveToEntities ( &clip );
+    }
+
+    *results = clip.trace;
 }
 
 
