@@ -170,7 +170,7 @@ void Netchan_Transmit( netchan_t *chan, int length, const byte *data ) {
 		Com_Printf("[ISM] Stomping Unsent Fragments %s\n",netsrcString[ chan->sock ]);
 	}
 	// fragment large reliable messages
-	/*if ( length >= FRAGMENT_SIZE )
+	if ( length >= FRAGMENT_SIZE )
 	{
 		chan->unsentFragments = qtrue;
 		chan->unsentLength = length;
@@ -180,31 +180,7 @@ void Netchan_Transmit( netchan_t *chan, int length, const byte *data ) {
 		Netchan_TransmitNextFragment( chan );
 
 		return;
-	} */
-
-	if ( length >= FRAGMENT_SIZE )
-    {
-        chan->unsentFragments = qtrue;
-        chan->unsentLength = length;
-        Com_Memcpy( chan->unsentBuffer, data, length );
-
-        // --- NEW SPLIT HACK ---
-        // Send a 16KB "initial burst" to ensure combat/player data 
-        // (the start of the snapshot) gets there ASAP.
-        int burstLimit = 16384; 
-        int sentSoFar = 0;
-
-        while ( chan->unsentFragments && sentSoFar < burstLimit ) {
-            int fragmentLen = FRAGMENT_SIZE;
-            if ( chan->unsentFragmentStart + fragmentLen > chan->unsentLength ) {
-                fragmentLen = chan->unsentLength - chan->unsentFragmentStart;
-            }
-
-            Netchan_TransmitNextFragment( chan );
-            sentSoFar += (fragmentLen + PACKET_HEADER);
-        }
-        return;
-    }
+	}
 
 	// write the packet header
 	MSG_InitOOB (&send, send_buf, sizeof(send_buf));
