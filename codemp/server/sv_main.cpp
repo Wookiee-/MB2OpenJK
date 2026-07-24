@@ -72,6 +72,7 @@ cvar_t	*sv_banFile;
 cvar_t	*sv_maxOOBRate;
 cvar_t	*sv_maxOOBRateIP;
 cvar_t	*sv_autoWhitelist;
+cvar_t	*sv_snapShotDuelCull;
 
 serverBan_t serverBans[SERVER_MAXBANS];
 int serverBansCount = 0;
@@ -1134,6 +1135,7 @@ int SV_FrameMsec()
 		return 1;
 }
 
+
 /*
 ==================
 SV_Frame
@@ -1250,6 +1252,5 @@ void SV_Frame( int msec ) {
 	// send a heartbeat to the master if needed
 	SV_MasterHeartbeat();
 }
-
 //============================================================================
 

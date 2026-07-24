@@ -23,6 +23,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 
 #include "server.h"
 #include "qcommon/cm_public.h"
+#include "duel_cull.h"
 
 /*
 =============================================================================
@@ -71,6 +72,7 @@ static void SV_EmitPacketEntities( clientSnapshot_t *from, clientSnapshot_t *to,
 	newindex = 0;
 	oldindex = 0;
 	while ( newindex < to->num_entities || oldindex < from_num_entities ) {
+
 		if ( newindex >= to->num_entities ) {
 			newnum = 9999;
 		} else {
@@ -609,6 +611,7 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 
 	// add all the entities directly visible to the eye, which
 	// may include portal entities that merge other viewpoints
+
 	SV_AddEntitiesVisibleFromPoint( org, frame, &entityNumbers, qfalse );
 
 	// if there were portals visible, there may be out of order entities
@@ -631,6 +634,11 @@ static void SV_BuildClientSnapshot( client_t *client ) {
 		ent = SV_GentityNum(entityNumbers.snapshotEntities[i]);
 		state = &svs.snapshotEntities[svs.nextSnapshotEntities % svs.numSnapshotEntities];
 		*state = ent->s;
+
+		if ( DuelCull(clent, ent) == 2 ) { 
+			state->solid = 0; 
+		}
+			
 		svs.nextSnapshotEntities++;
 		// this should never hit, map should always be restarted first in SV_Frame
 		if ( svs.nextSnapshotEntities >= 0x7FFFFFFE ) {
@@ -698,7 +706,7 @@ void SV_SendMessageToClient( msg_t *msg, client_t *client ) {
 	{
 		// send additional message fragments if the last message
 		// was too large to send at once
-		Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+		// Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
 		SV_Netchan_TransmitNextFragment(&client->netchan);
 	}
 
@@ -800,7 +808,7 @@ void SV_SendClientSnapshot( client_t *client ) {
 		{
 			// send additional message fragments if the last message
 			// was too large to send at once
-			Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
+			// Com_Printf ("[ISM]SV_SendClientGameState() [1] for %s, writing out old fragments\n", client->name);
 			SV_Netchan_TransmitNextFragment(&client->netchan);
 		}
 
@@ -883,8 +891,8 @@ void SV_SendClientMessages( void ) {
 				SV_RateMsec( c, c->netchan.unsentLength - c->netchan.unsentFragmentStart );
 			SV_Netchan_TransmitNextFragment( &c->netchan );
 			continue;
-		}
-
+		} 
+		
 		// generate and send a new message
 		SV_SendClientSnapshot( c );
 	}

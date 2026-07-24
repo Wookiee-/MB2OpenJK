@@ -493,7 +493,7 @@ void SV_SendClientGameState( client_t *client ) {
 		// send additional message fragments if the last message
 		// was too large to send at once
 
-		Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
+		// Com_Printf ("[ISM]SV_SendClientGameState() [2] for %s, writing out old fragments\n", client->name);
 		SV_Netchan_TransmitNextFragment(&client->netchan);
 	}
 
@@ -1232,6 +1232,7 @@ static void SV_UpdateUserinfo_f( client_t *cl ) {
 	}
 
 	SV_UserinfoChanged( cl );
+	
 	// call prog code to allow overrides
 	GVM_ClientUserinfoChanged( cl - svs.clients );
 }
@@ -1601,4 +1602,3 @@ void SV_ExecuteClientMessage( client_t *cl, msg_t *msg ) {
 //		Com_Printf( "WARNING: Junk at end of packet for client %i\n", cl - svs.clients );
 //	}
 }
-

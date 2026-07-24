@@ -26,7 +26,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "server.h"
 #include "ghoul2/ghoul2_shared.h"
 #include "qcommon/cm_public.h"
-
+#include "duel_cull.h"
 /*
 ================
 SV_ClipHandleForEntity
@@ -456,10 +456,10 @@ int SV_AreaEntities( const vec3_t mins, const vec3_t maxs, int *entityList, int 
 typedef struct moveclip_s {
 	vec3_t		boxmins, boxmaxs;// enclose the test object along entire move
 	const float	*mins;
-	const float *maxs;	// size of the moving object
+	const float *maxs;	// size of the moving object 
 /*
 Ghoul2 Insert Start
-*/
+*/ 
 	vec3_t		start;
 
 	vec3_t		end;
@@ -470,11 +470,11 @@ Ghoul2 Insert Start
 
 	int			traceFlags;
 	int			useLod;
-	trace_t		trace;			// make sure nothing goes under here for Ghoul2 collision purposes
+	trace_t		trace;			// make sure nothing goes under here for Ghoul2 collision purposes 
 /*
 Ghoul2 Insert End
-*/
-} moveclip_t;
+*/ 
+} moveclip_t;  
 
 
 /*
@@ -552,13 +552,13 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		if ( passOwnerNum == ENTITYNUM_NONE ) {
 			passOwnerNum = -1;
 		}
+
+		if ( SV_GentityNum(clip->passEntityNum)->r.svFlags & SVF_OWNERNOTSHARED )
+		{
+			thisOwnerShared = 0;
+		}
 	} else {
 		passOwnerNum = -1;
-	}
-
-	if ( SV_GentityNum(clip->passEntityNum)->r.svFlags & SVF_OWNERNOTSHARED )
-	{
-		thisOwnerShared = 0;
 	}
 
 	for ( i=0 ; i<num ; i++ ) {
@@ -609,6 +609,10 @@ static void SV_ClipMoveToEntities( moveclip_t *clip ) {
 		if ((clip->contentmask == (MASK_SHOT|CONTENTS_LIGHTSABER) || clip->contentmask == MASK_SHOT) && (touch->r.contents > 0 && (touch->r.contents & CONTENTS_NOSHOT)))
 		{
 			continue;
+		}
+		
+		if ( DuelCull(SV_GentityNum(clip->passEntityNum), touch) == 2 ) {
+			continue; 
 		}
 
 		// might intersect, so do an exact clip

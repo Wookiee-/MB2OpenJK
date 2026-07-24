@@ -187,3 +187,12 @@ pip-log.txt
 ## CLion
 #############
 .idea
+
+#############
+## Proxy
+#############
+proxy/
+build-pgo/
+pgort*.dll
+testargs.bat
+opencode.txt

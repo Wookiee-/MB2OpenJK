@@ -28,6 +28,7 @@ along with this program; if not, see <http://www.gnu.org/licenses/>.
 #include "game/g_public.h"
 #include "game/bg_public.h"
 #include "rd-common/tr_public.h"
+#include "server/duel_cull.h"
 
 //=============================================================================
 
@@ -276,6 +277,7 @@ extern	cvar_t	*sv_banFile;
 extern	cvar_t	*sv_maxOOBRate;
 extern	cvar_t	*sv_maxOOBRateIP;
 extern	cvar_t	*sv_autoWhitelist;
+extern	cvar_t	*sv_snapShotDuelCull;
 
 extern	serverBan_t serverBans[SERVER_MAXBANS];
 extern	int serverBansCount;
@@ -307,8 +309,6 @@ void SV_RemoveOperatorCommands (void);
 
 void SV_MasterHeartbeat (void);
 void SV_MasterShutdown (void);
-
-
 
 
 //
