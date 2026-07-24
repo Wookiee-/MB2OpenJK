@@ -13,8 +13,8 @@ case "$1" in
     *)
         echo "Usage: $0 {generate|use} [build-dir]"
         echo ""
-echo "  generate  - build instrumented MP binaries (Phase 1)"
-echo "  use       - rebuild MP binaries from profiles (Phase 3)"
+        echo "  generate  - build instrumented MP binaries (Phase 1)"
+        echo "  use       - rebuild MP binaries from profiles (Phase 3)"
         echo ""
         echo "  Phase 2: run the instrumented binaries from Phase 1 on"
         echo "           real workloads, then exit to flush profiles."
