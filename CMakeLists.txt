@@ -263,6 +263,12 @@ elseif (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_C_COMPILER_ID}" M
 		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse2")
 	endif()
 
+	# 32-bit Architecture Safety Net (Matches Raven ICC Stack & SSE Math)
+	if(CMAKE_SIZEOF_VOID_P EQUAL 4)
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mstackrealign -msse2 -mfpmath=sse")
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mstackrealign -msse2 -mfpmath=sse")
+	endif()
+
 	# Base Release Flags: -O2 + Vectorization + No Aliasing + No PIE
 	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O2 -ftree-vectorize -fno-strict-aliasing -fno-pie")
 	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -ftree-vectorize -fno-strict-aliasing -fno-pie")
