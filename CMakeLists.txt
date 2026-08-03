@@ -269,9 +269,9 @@ elseif (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_C_COMPILER_ID}" M
 		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mstackrealign -msse2 -mfpmath=sse")
 	endif()
 
-	# Base Release Flags: -O2 + Vectorization + No Aliasing + No PIE
-	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O2 -ftree-vectorize -fno-strict-aliasing -fno-pie")
-	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -ftree-vectorize -fno-strict-aliasing -fno-pie")
+	# Base Release Flags: -O2 + No Aliasing + No PIE
+	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O2 -fno-strict-aliasing -fno-pie")
+	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -fno-strict-aliasing -fno-pie")
 
 	# Linker Flags for Executables and Shared Libraries (.so)
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -no-pie")
