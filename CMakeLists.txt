@@ -28,13 +28,6 @@ project(${ProjectName})
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
 
-# Profile-guided optimization (Raven-style PGO)
-#   Phase 1: cmake -B build -DPGO=GENERATE -DCMAKE_BUILD_TYPE=Release
-#   Phase 2: run the built binary on representative maps/workloads
-#   Phase 3: cmake -B build -DPGO=USE -DCMAKE_BUILD_TYPE=Release
-set(PGO "" CACHE STRING "PGO mode: empty=off, GENERATE=instrument, USE=optimize")
-set_property(CACHE PGO PROPERTY STRINGS "" GENERATE USE)
-
 #=============================================================================
 #
 # Customizable options
@@ -224,19 +217,6 @@ if(MSVC)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:SSE2")
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
 
-	# MSVC PGO (requires LTCG — only activated when PGO is set)
-	if(PGO STREQUAL "GENERATE")
-		set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /GL")
-		set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
-		set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG:PGINSTRUMENT")
-		set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG:PGINSTRUMENT")
-	elseif(PGO STREQUAL "USE")
-		set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /GL")
-		set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /GL")
-		set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG:PGOPTIMIZE")
-		set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} /LTCG:PGOPTIMIZE")
-	endif()
-
 	# We don't try to control symbol visibility under MSVC.
 	set(OPENJK_VISIBILITY_FLAGS "")
 elseif (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_C_COMPILER_ID}" MATCHES "Clang"))
@@ -258,52 +238,37 @@ elseif (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_C_COMPILER_ID}" M
 	set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -ggdb")
 	set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -ggdb")
 
-	if (X86)
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -msse2")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse2")
-	endif()
+	# =========================================================================
+	# LEGACY ICC 7.0/8.0 EMULATION MATRIX (2003 Era Optimization, 32-bit)
+	# =========================================================================
+	# 1. Force execution pipeline logic to strict Pentium 4 architecture (32-bit only)
+	# 2. Re-enable ultra-aggressive math shortcuts used by early Intel compilers
+	# 3. Strip out modern wide registers (AVX) that break legacy math rounding
+	# 4. Enforce float-store to mitigate intermediate 80-bit x87 register drift
+	# =========================================================================
+	# NOTE: -march=pentium4 is 32-bit only and fails on x86_64. Gate it.
+	set(ICC_MATH_FLAGS "-ffast-math -mno-avx -mno-avx2 -mno-avx512f -ffloat-store")
+	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${ICC_MATH_FLAGS}")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ICC_MATH_FLAGS}")
 
-	# 32-bit Architecture Safety Net (Matches Raven ICC Stack & SSE Math)
 	if(CMAKE_SIZEOF_VOID_P EQUAL 4)
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mstackrealign -msse2 -mfpmath=sse")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mstackrealign -msse2 -mfpmath=sse")
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=pentium4 -mstackrealign -mfpmath=sse")
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=pentium4 -mstackrealign -mfpmath=sse")
 	endif()
 
-	# Base Release Flags: -O2 + No Aliasing + No PIE
-	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O2 -fno-strict-aliasing -fno-pie")
-	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2 -fno-strict-aliasing -fno-pie")
+	# Override standard -O2 release optimization with aggressive -O3 (ICC default loop handling)
+	set(CMAKE_C_FLAGS_RELEASE "-O3 -fno-strict-aliasing -fno-pie")
+	set(CMAKE_CXX_FLAGS_RELEASE "-O3 -fno-strict-aliasing -fno-pie")
 
 	# Linker Flags for Executables and Shared Libraries (.so)
 	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -no-pie")
 	set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} -no-pie")
 
-	# Profile-guided optimization (GCC/Clang)
-	if(PGO STREQUAL "GENERATE")
-		set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -fprofile-generate")
-		set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -fprofile-generate")
-		set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -fprofile-generate")
-		set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} -fprofile-generate")
-	elseif(PGO STREQUAL "USE")
-		set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -fprofile-use -fprofile-correction -Wno-coverage-mismatch")
-		set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -fprofile-use -fprofile-correction -Wno-coverage-mismatch")
-	endif()
-
-	# enable somewhat modern C++
+	# Enable C++11 as required by OpenJK core
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
 	
 	if("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU")
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-comment")
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsigned-char")
-		if (X86)
-			# "x86 vm will crash without -mstackrealign since MMX
-			# instructions will be used no matter what and they
-			# corrupt the frame pointer in VM calls"
-			# -ioquake3 Makefile
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mstackrealign")
-			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfpmath=sse")
-		endif()
-
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-comment -fsigned-char")
 		if(WIN32)
 			# Link libgcc and libstdc++ statically
 			set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -static-libgcc")
@@ -311,28 +276,13 @@ elseif (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_C_COMPILER_ID}" M
 			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -static-libstdc++")
 		endif()
 	elseif("${CMAKE_C_COMPILER_ID}" MATCHES "Clang")
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall")
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-comment")
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsigned-char")
+		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wno-comment -fsigned-char")
 	endif()
 
 	if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-invalid-offsetof")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-write-strings")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-comment")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsigned-char")
-		if (X86)
-			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mstackrealign")
-			set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfpmath=sse")
-		endif()
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-invalid-offsetof -Wno-write-strings -Wno-comment -fsigned-char")
 	elseif("${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-write-strings")
-		#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-deprecated-writable-strings")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-comment")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-invalid-offsetof")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsigned-char")
+		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wno-write-strings -Wno-comment -Wno-invalid-offsetof -fsigned-char")
 	endif()
 else()
 	message(ERROR "Unsupported compiler")
