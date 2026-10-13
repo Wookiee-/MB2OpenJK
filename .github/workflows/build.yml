@@ -102,7 +102,15 @@ jobs:
       with:
         tag: latest-${{ github.ref_name }}
         name: Latest build (${{ github.ref_name }})
-        body: "Latest successful build. Assets are replaced on every build, so only one version is listed."
+        body: |
+          Rolling build of the MB2OpenJK dedicated server from branch `${{ github.ref_name }}` (`${{ github.sha }}`). Assets are replaced on every build, so only one version is listed.
+
+          These are **dedicated servers only** (no client/engine, renderer, or `cgame`/`jampgame`/`ui` DLLs). You need a Jedi Academy install with Movie Battles II data to run them. Both are portable builds (no home-directory writes).
+
+          | Asset | Platform | What it does |
+          | --- | --- | --- |
+          | `mbiided.x86.exe` | Windows 32-bit | MBII dedicated server (`BuildMPDed`). Host a server on Windows. Built with `LargeAddressAware` so it can use >2GB RAM. |
+          | `mbiided.i386` | Linux 32-bit (i686) | Same MBII dedicated server for Linux hosts. `chmod +x` then run. |
         allowUpdates: true
         replacesArtifacts: true
         removeArtifacts: true
