@@ -111,6 +111,13 @@ jobs:
           | --- | --- | --- |
           | `mbiided.x86.exe` | Windows 32-bit | MBII dedicated server (`BuildMPDed`). Host a server on Windows. Built with `LargeAddressAware` so it can use >2GB RAM. |
           | `mbiided.i386` | Linux 32-bit (i686) | Same MBII dedicated server for Linux hosts. `chmod +x` then run. |
+
+          ### Highlights
+          - Serverside Duel Isolation (`sv_snapShotDuelCull`, default `1`, see `codemp/server/duel_cull.cpp`):
+            - Duelists stay solid to their actual duel partner, so no ghosting/passthrough while dueling.
+            - Duelers vs non-duelers (and vs other duels) pass through: clip skipped in `SV_ClipMoveToEntities` and `solid = 0` in snapshots, so nobody gets body-blocked/clipped/stuck.
+            - Set `sv_snapShotDuelCull 0` to disable.
+          - 2003-era ICC 7.0/8.0 emulation (32-bit only, see `CMakeLists.txt`): GCC uses `-O2 -ffast-math -mno-avx -ffloat-store -march=pentium4 -mfpmath=sse -mstackrealign -fno-strict-aliasing -no-pie`; MSVC uses `/arch:SSE2 /fp:fast /fp:except- /DYNAMICBASE:NO`.
         allowUpdates: true
         replacesArtifacts: true
         removeArtifacts: true
