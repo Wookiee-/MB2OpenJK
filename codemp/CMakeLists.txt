@@ -353,6 +353,12 @@ if(BuildMPEngine OR BuildMPDed)
 		)
 	set(MPEngineAndDedFiles ${MPEngineAndDedFiles} ${MPEngineAndDedSysFiles})
 	source_group("sys" FILES ${MPEngineAndDedSysFiles})
+
+	# snapvector.cpp uses #pragma fenv_access(on), which MSVC rejects under
+	# /fp:fast (C3198) — it requires /fp:precise or /fp:strict.
+	if(MSVC)
+		set_source_files_properties("${SharedDir}/sys/snapvector.cpp" PROPERTIES COMPILE_FLAGS "/fp:precise")
+	endif()
 endif(BuildMPEngine OR BuildMPDed)
 
 #        Engine/Executable (jamp.exe)
