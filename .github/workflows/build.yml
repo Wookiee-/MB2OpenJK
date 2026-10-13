@@ -13,7 +13,7 @@ concurrency:
 jobs:
 
   windows:
-    name: Build Windows Client (VS 2022, Win32, Release)
+    name: Build Windows Server (VS 2022, Win32, Release)
     runs-on: windows-latest
 
     steps:
@@ -21,7 +21,11 @@ jobs:
 
     - name: Configure CMake
       shell: powershell
-      run: cmake -S $env:GITHUB_WORKSPACE -B build -A Win32 -DBuildPortableVersion=ON
+      run: >
+        cmake -S $env:GITHUB_WORKSPACE -B build -A Win32 -DBuildPortableVersion=ON
+        -DBuildMPDed=ON -DBuildMPEngine=OFF -DBuildMPRdVanilla=OFF -DBuildMPCGame=OFF
+        -DBuildMPUI=OFF -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF
+        -DBuildMPRdVulkan=OFF -DBuildMPRend2=OFF
 
     - name: Build
       shell: powershell
@@ -34,15 +38,13 @@ jobs:
 
     - name: Apply LAA flag
       shell: powershell
-      run: editbin.exe /largeaddressaware build/Release/mbii.x86.exe
+      run: editbin.exe /largeaddressaware build/Release/mbiided.x86.exe
 
     - name: Upload Build
       uses: actions/upload-artifact@v4
       with:
-        name: Windows Build Release
-        path: |
-            build/Release
-            !build/Release/compact_glsl.exe
+        name: Windows Server Build Release
+        path: build/Release/mbiided.x86.exe
         retention-days: 7
 
   linux-old:
@@ -103,5 +105,6 @@ jobs:
         body: "Latest successful build. Assets are replaced on every build, so only one version is listed."
         allowUpdates: true
         replacesArtifacts: true
+        removeArtifacts: true
         artifacts: "latest/**/*"
         token: ${{ secrets.GITHUB_TOKEN }}
