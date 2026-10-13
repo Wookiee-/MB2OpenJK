@@ -43,6 +43,7 @@ jobs:
         path: |
             build/Release
             !build/Release/compact_glsl.exe
+        retention-days: 7
 
   linux:
     name: Build Linux Client (Release)
@@ -87,6 +88,7 @@ jobs:
         path: |
           build/*.i386
           build/*.so
+        retention-days: 7
 
   linux-old:
     name: Build Linux Server (Release)
@@ -125,3 +127,26 @@ jobs:
       with:
         name: Linux Server Build Release
         path: build/*.i386
+        retention-days: 7
+
+  release:
+    name: Publish latest binaries (rolling release)
+    runs-on: ubuntu-latest
+    needs: [windows, linux, linux-old]
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        path: latest
+
+    - name: Publish rolling release
+      uses: ncipollo/release-action@v1
+      with:
+        tag: latest-${{ github.ref_name }}
+        name: Latest build (${{ github.ref_name }})
+        body: "Latest successful build. Assets are replaced on every build, so only one version is listed."
+        allowUpdates: true
+        replacesArtifacts: true
+        artifacts: "latest/**/*"
+        token: ${{ secrets.GITHUB_TOKEN }}
