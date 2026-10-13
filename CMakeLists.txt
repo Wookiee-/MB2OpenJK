@@ -217,6 +217,20 @@ if(MSVC)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:SSE2")
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
 
+	# ICC 7.0/8.0 emulation parity with the GCC/Clang flags below.
+	# /fp:fast + /fp:except- match -ffast-math; AVX is never emitted
+	# without /arch:AVX*; /arch:SSE2 (above) matches -march=pentium4
+	# -mfpmath=sse; MSVC does no type-based alias analysis (matches
+	# -fno-strict-aliasing) and aligns SSE locals itself (matches
+	# -mstackrealign).
+	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /fp:fast /fp:except-")
+	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /fp:fast /fp:except-")
+
+	# Matches -no-pie on the GCC side (fixed load address, no ASLR).
+	set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE:NO")
+	set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DYNAMICBASE:NO")
+	set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} /DYNAMICBASE:NO")
+
 	# We don't try to control symbol visibility under MSVC.
 	set(OPENJK_VISIBILITY_FLAGS "")
 elseif (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_C_COMPILER_ID}" MATCHES "Clang"))
