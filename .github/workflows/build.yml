@@ -5,123 +5,123 @@ on:
   push:
     branches: [master, experimental]
 
+# Only one run per branch at a time; a new push cancels the superseded run.
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
 
-  vs2013_xp:
-    name: Build VS 2013, Windows XP, ${{ matrix.build_type }}
-    runs-on: [self-hosted, windows]
-    strategy:
-      matrix:
-        build_type: [Release, RelWithDebInfo]
+  windows:
+    name: Build Windows Client (VS 2022, Win32, Release)
+    runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v2
-
-    - name: Create Build Environment
-      run:  cmake -E make_directory ${{runner.workspace}}/build
+    - uses: actions/checkout@v4
 
     - name: Configure CMake
       shell: powershell
-      working-directory: ${{runner.workspace}}/build
-      run: cmake $env:GITHUB_WORKSPACE -A Win32 -T v120_xp -DBuildPortableVersion=ON
+      run: cmake -S $env:GITHUB_WORKSPACE -B build -A Win32 -DBuildPortableVersion=ON
 
     - name: Build
-      working-directory: ${{runner.workspace}}/build
       shell: powershell
-      run: cmake --build . --config ${{ matrix.build_type }}
-      
+      run: cmake --build build --config Release
+
     - name: Set LAA
-      working-directory: "C:\\Program Files (x86)\\Microsoft Visual Studio 12.0\\VC\\bin" 
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x86
+
+    - name: Apply LAA flag
       shell: powershell
-      run: ./editbin.exe /largeaddressaware ${{runner.workspace}}/build/${{ matrix.build_type }}/mbii.x86.exe
+      run: editbin.exe /largeaddressaware build/Release/mbii.x86.exe
 
     - name: Upload Build
-      uses: actions/upload-artifact@v4.6.1
+      uses: actions/upload-artifact@v4
       with:
-        name: Windows Build ${{ matrix.build_type }}
+        name: Windows Build Release
         path: |
-            ${{runner.workspace}}/build/${{ matrix.build_type }}
-            !${{runner.workspace}}/build/${{ matrix.build_type }}/compact_glsl.exe
-        
-  win_cleanup:
-    name: Cleanup Windows Builds
-    runs-on: [self-hosted, windows]
-    needs: vs2013_xp
-    steps:
-      - name: Move Build Folder
-        run: | 
-          cmake -E remove_directory ${{runner.workspace}}/lastbuild
-          cmake -E rename ${{runner.workspace}}/build ${{runner.workspace}}/lastbuild
+            build/Release
+            !build/Release/compact_glsl.exe
 
   linux:
-    name: Build Linux Client, ${{ matrix.build_type }}
-    runs-on: [self-hosted, linux]
-    strategy:
-      matrix:
-        build_type: [Release]
+    name: Build Linux Client (Release)
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
-        
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        sudo dpkg --add-architecture i386
+        sudo apt-get -q update
+        sudo apt-get -q install -y --no-install-recommends \
+          gcc-multilib g++-multilib cmake \
+          libjpeg-dev libjpeg-dev:i386 \
+          libpng-dev libpng-dev:i386 \
+          zlib1g-dev zlib1g-dev:i386
+
     - name: Configure CMake
       shell: bash
-      working-directory: ${{runner.workspace}}/build
       run: >
-        cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        cmake -S $GITHUB_WORKSPACE -B build -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchains/linux-i686.cmake
         -DBuildMPDed=OFF -DBuildMPEngine=ON -DBuildMPRdVanilla=ON -DBuildMPCGame=OFF
         -DBuildMPUI=OFF -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF
         -DUseInternalPNG=ON -DUseInternalJPEG=ON -DBuildMPRdVulkan=ON -DBuildMPRend2=ON
 
     - name: Build
-      working-directory: ${{runner.workspace}}/build
       shell: bash
+      working-directory: build
       run: |
         cmake --build .
         mv codemp/rd-vanilla/rd-vanilla-mbii_i386.so .
         mv codemp/rd-vulkan/rd-vulkan-mbii_i386.so .
         mv codemp/rd-rend2/rd-rend2-mbii_i386.so .
-      
+
     - name: Upload Build
-      uses: actions/upload-artifact@v4.6.1
+      uses: actions/upload-artifact@v4
       with:
-        name: Linux Client Build ${{ matrix.build_type }}
+        name: Linux Client Build Release
         path: |
-          ${{runner.workspace}}/build/*.i386
-          ${{runner.workspace}}/build/*.so
+          build/*.i386
+          build/*.so
 
   linux-old:
-    name: Build Linux Server, ${{ matrix.build_type }}
-    runs-on:  [self-hosted, linux]
-    strategy:
-      matrix:
-        build_type: [Release]
+    name: Build Linux Server (Release)
+    runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
 
-    - name: Create Build Environment
-      run: cmake -E make_directory ${{runner.workspace}}/build
-      
+    - name: Install dependencies
+      shell: bash
+      run: |
+        sudo dpkg --add-architecture i386
+        sudo apt-get -q update
+        sudo apt-get -q install -y --no-install-recommends \
+          gcc-multilib g++-multilib cmake \
+          libjpeg-dev libjpeg-dev:i386 \
+          libpng-dev libpng-dev:i386 \
+          zlib1g-dev zlib1g-dev:i386
+
     - name: Configure CMake
       shell: bash
-      working-directory: ${{runner.workspace}}/build
       run: >
-        cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=${{ matrix.build_type }}
+        cmake -S $GITHUB_WORKSPACE -B build -DCMAKE_BUILD_TYPE=Release
         -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchains/linux-i686.cmake
         -DBuildMPDed=ON -DBuildMPEngine=OFF -DBuildMPRdVanilla=OFF -DBuildMPCGame=OFF
         -DBuildMPUI=OFF -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF
         -DBuildMPRdVulkan=OFF -DBuildMPRend2=OFF
 
     - name: Build
-      working-directory: ${{runner.workspace}}/build
       shell: bash
+      working-directory: build
       run: cmake --build .
-      
+
     - name: Upload Build
-      uses: actions/upload-artifact@v4.6.1
+      uses: actions/upload-artifact@v4
       with:
-        name: Linux Server Build ${{ matrix.build_type }}
-        path: ${{runner.workspace}}/build/*.i386
-        
-        
+        name: Linux Server Build Release
+        path: build/*.i386
