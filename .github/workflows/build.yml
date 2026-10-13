@@ -3,7 +3,7 @@ name: Build
 on:
   workflow_dispatch:
   push:
-    branches: [master, experimental]
+    branches: [experimental]
 
 # Only one run per branch at a time; a new push cancels the superseded run.
 concurrency:
