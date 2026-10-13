@@ -45,51 +45,6 @@ jobs:
             !build/Release/compact_glsl.exe
         retention-days: 7
 
-  linux:
-    name: Build Linux Client (Release)
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Install dependencies
-      shell: bash
-      run: |
-        sudo dpkg --add-architecture i386
-        sudo apt-get -q update
-        sudo apt-get -q install -y --no-install-recommends \
-          gcc-multilib g++-multilib cmake \
-          libjpeg-dev libjpeg-dev:i386 \
-          libpng-dev libpng-dev:i386 \
-          zlib1g-dev zlib1g-dev:i386
-
-    - name: Configure CMake
-      shell: bash
-      run: >
-        cmake -S $GITHUB_WORKSPACE -B build -DCMAKE_BUILD_TYPE=Release
-        -DCMAKE_TOOLCHAIN_FILE=cmake/Toolchains/linux-i686.cmake
-        -DBuildMPDed=OFF -DBuildMPEngine=ON -DBuildMPRdVanilla=ON -DBuildMPCGame=OFF
-        -DBuildMPUI=OFF -DBuildSPEngine=OFF -DBuildSPGame=OFF -DBuildSPRdVanilla=OFF
-        -DUseInternalPNG=ON -DUseInternalJPEG=ON -DBuildMPRdVulkan=ON -DBuildMPRend2=ON
-
-    - name: Build
-      shell: bash
-      working-directory: build
-      run: |
-        cmake --build .
-        mv codemp/rd-vanilla/rd-vanilla-mbii_i386.so .
-        mv codemp/rd-vulkan/rd-vulkan-mbii_i386.so .
-        mv codemp/rd-rend2/rd-rend2-mbii_i386.so .
-
-    - name: Upload Build
-      uses: actions/upload-artifact@v4
-      with:
-        name: Linux Client Build Release
-        path: |
-          build/*.i386
-          build/*.so
-        retention-days: 7
-
   linux-old:
     name: Build Linux Server (Release)
     runs-on: ubuntu-latest
@@ -132,7 +87,7 @@ jobs:
   release:
     name: Publish latest binaries (rolling release)
     runs-on: ubuntu-latest
-    needs: [windows, linux, linux-old]
+    needs: [windows, linux-old]
     permissions:
       contents: write
     steps:
