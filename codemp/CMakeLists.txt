@@ -712,6 +712,20 @@ if(BuildMPDed)
 	endif(WIN32)
 
 	add_executable(${MPDed} ${MPDedFiles})
+	# The original 2003 dedicated-server build used the 32-bit ICC tuning
+	# model. Keep this compatibility tuning on mbiided only; applying it via
+	# the global C/C++ flags would also change the client and renderers.
+	if(MBIIDED_ICC2003_COMPILE_OPTIONS)
+		target_compile_options(${MPDed} PRIVATE ${MBIIDED_ICC2003_COMPILE_OPTIONS})
+	endif()
+	if(MBIIDED_ICC2003_RELEASE_COMPILE_OPTIONS)
+		target_compile_options(${MPDed} PRIVATE
+			"$<$<CONFIG:Release>:${MBIIDED_ICC2003_RELEASE_COMPILE_OPTIONS}>")
+	endif()
+	if(MBIIDED_ICC2003_RELEASE_LINK_OPTIONS)
+		set_property(TARGET ${MPDed} APPEND_STRING PROPERTY
+			LINK_FLAGS_RELEASE " ${MBIIDED_ICC2003_RELEASE_LINK_OPTIONS}")
+	endif()
 	install(TARGETS ${MPDed}
 		RUNTIME
 		DESTINATION ${JKAInstallDir}

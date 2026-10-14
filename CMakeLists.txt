@@ -205,6 +205,10 @@ if(CMAKE_SYSTEM_NAME MATCHES "BSD")
 endif()
 
 # Compiler settings
+set(MBIIDED_ICC2003_COMPILE_OPTIONS "")
+set(MBIIDED_ICC2003_RELEASE_COMPILE_OPTIONS "")
+set(MBIIDED_ICC2003_RELEASE_LINK_OPTIONS "")
+
 if(MSVC)
 	set(SharedDefines ${SharedDefines} "NOMINMAX")
 	set(SharedDefines ${SharedDefines} "_CRT_SECURE_NO_WARNINGS")
@@ -217,21 +221,13 @@ if(MSVC)
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /arch:SSE2")
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
 
-	# ICC 7.0/8.0 emulation parity with the GCC/Clang flags below.
-	# 32-bit only, matching the CMAKE_SIZEOF_VOID_P gate on that side.
-	# /fp:fast + /fp:except- match -ffast-math; AVX is never emitted
-	# without /arch:AVX*; /arch:SSE2 (above) matches -march=pentium4
-	# -mfpmath=sse; MSVC does no type-based alias analysis (matches
-	# -fno-strict-aliasing) and aligns SSE locals itself (matches
-	# -mstackrealign).
+	# ICC 7.0/8.0 emulation for the 32-bit dedicated server.  The old ICC
+	# build was an x86 build; do not apply these options to 64-bit targets.
 	if(CMAKE_SIZEOF_VOID_P EQUAL 4)
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /fp:fast /fp:except-")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /fp:fast /fp:except-")
+		set(MBIIDED_ICC2003_COMPILE_OPTIONS "/fp:fast" "/fp:except-")
 
-		# Matches -no-pie on the GCC side (fixed load address, no ASLR).
-		set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /DYNAMICBASE:NO")
-		set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} /DYNAMICBASE:NO")
-		set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} /DYNAMICBASE:NO")
+		# Matches -fno-pie/-no-pie on the GCC side (fixed load address, no ASLR).
+		set(MBIIDED_ICC2003_RELEASE_LINK_OPTIONS "/DYNAMICBASE:NO")
 	endif()
 
 	# We don't try to control symbol visibility under MSVC.
@@ -255,35 +251,17 @@ elseif (("${CMAKE_C_COMPILER_ID}" STREQUAL "GNU") OR ("${CMAKE_C_COMPILER_ID}" M
 	set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -ggdb")
 	set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -ggdb")
 
-	# =========================================================================
-	# LEGACY ICC 7.0/8.0 EMULATION MATRIX (2003 Era Optimization, 32-bit)
-	# =========================================================================
-	# 1. Force execution pipeline logic to strict Pentium 4 architecture (32-bit only)
-	# 2. Re-enable ultra-aggressive math shortcuts used by early Intel compilers
-	# 3. Strip out modern wide registers (AVX) that break legacy math rounding
-	# 4. Enforce float-store to mitigate intermediate 80-bit x87 register drift
-	# =========================================================================
-	# NOTE: -march=pentium4 is 32-bit only and fails on x86_64. Gate it.
-	set(ICC_MATH_FLAGS "-ffast-math -mno-avx -mno-avx2 -mno-avx512f -ffloat-store")
-	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${ICC_MATH_FLAGS}")
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${ICC_MATH_FLAGS}")
-
 	if(CMAKE_SIZEOF_VOID_P EQUAL 4)
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -march=pentium4 -mstackrealign -mfpmath=sse")
-		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -march=pentium4 -mstackrealign -mfpmath=sse")
+		# Approximate the 2003 ICC x86 code-generation model: Pentium 4/SSE2,
+		# aggressive floating-point simplification, and no extended x87 values.
+		set(MBIIDED_ICC2003_COMPILE_OPTIONS
+			"-ffast-math" "-mno-avx" "-mno-avx2" "-mno-avx512f"
+			"-ffloat-store" "-march=pentium4" "-mstackrealign" "-mfpmath=sse")
+		# Put -O2 after CMake's default release flags so this target does not
+		# inherit a newer -O3 tuning level.
+		set(MBIIDED_ICC2003_RELEASE_COMPILE_OPTIONS "-O2" "-fno-strict-aliasing" "-fno-pie")
+		set(MBIIDED_ICC2003_RELEASE_LINK_OPTIONS "-no-pie")
 	endif()
-
-	# Override standard -O3 release optimization with aggressive -O2 (ICC default loop handling)
-	# NOTE: preserve CMake's default -DNDEBUG (defines NDEBUG, which PLATFORM_STRING
-	# in q_platform.h and assert() depend on to detect release builds).
-	string(REPLACE "-O3" "-O2" CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE}")
-	string(REPLACE "-O3" "-O2" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-	set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -fno-strict-aliasing -fno-pie")
-	set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -fno-strict-aliasing -fno-pie")
-
-	# Linker Flags for Executables and Shared Libraries (.so)
-	set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} -no-pie")
-	set(CMAKE_SHARED_LINKER_FLAGS_RELEASE "${CMAKE_SHARED_LINKER_FLAGS_RELEASE} -no-pie")
 
 	# Enable C++11 as required by OpenJK core
 	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
